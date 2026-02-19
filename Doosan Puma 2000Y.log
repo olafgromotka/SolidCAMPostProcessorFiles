@@ -1,0 +1,12 @@
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: Check the Stations ID and fix if necessary (SC2017 SP2) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: Added a new Paramter 'Full 5x Trace' to Working Style -> Tarce (SC2017 SP2) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: Added Machine Simulation Def' to Working Style (SC2018 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: Added Tool Magazine to Machine (SC2018 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: Ability to define geometries for Machine Preview and Machine Simulation (SC2018 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 24/05/2018 - Ability to define: left hand Submachine CoordSys + Tilted Plane, 'Reverse Working Plane Z' + Arc Execution, 'Arc Direction By Plane Normal'(SC2018 SP2) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 01/09/2018 - Ability to define: Threading Cycle, and in Drill Cycle added option of Reamering'(SC2019 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 04/10/2018 - Ability to define: Drive Unit name (SC2019 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 11/11/2018 - Fix number of pockets in Magazines (SC2019 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 29/11/2018 - Added a new option in Tilted Plane Definition called Incline Index (SC2020 SP0) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 13/02/2019 - Axes Patters as parent - child relation (SC2019 SP1) - Done.
+Date: 23-05-2023 02:30:37 	 Version: 31 	 Update reason: 15/08/2019 - Fixed invalid Magazines (SC2019 SP3) - Done.

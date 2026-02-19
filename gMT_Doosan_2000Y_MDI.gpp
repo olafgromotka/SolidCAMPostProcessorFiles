@@ -1,0 +1,2759 @@
+; Machine           : Doosan 2000Y
+; Type              : 1T2S Lathe 
+; SubRoutines       :
+; Comp Type         : 
+; Customer          : MDI
+; Rev 0.1 :02/17/2016     : Configured post for evaluation version software.
+; Rev 0.2 :12.20.2017 GA  : Added functionality for tool list, first rapid axis, homing strings, and tool offsets by letter.
+; Rev 0.3 :01.29.2018 GA  : Fixed multi start threads, tool list with no channel output, and added tail stock act mco
+; Rev 0.4 :02.02.2018 GA  : Set C to 0 in rpos calc for cart output
+; Rev 0.5 :02.02.2018 GA  : Moved nSpeedType to spindle output line
+; Rev 0.6 :06.14.2018 GA  : changed arc_direction_h to arc_direction
+; Rev 1.0 :11.20.2018 GS  : Initial release to customer
+; Rev 1.1 :01.18.2019 HG  : Added logic in @start_of_job for HSM jobs only. SC is setting rot_axis_type to axis4_radial. This forces any HSM jobs that are either transformed, or not at zero, to not get A axis rotation output.
+; Rev 1.2 :01.21.2019 HG  : Added logic to tool change. If it's a milling job, and the tool position is not "A", I am outputting an M00 so operator can manually swap the tool.
+; Rev 1.3 :03.08.2019 GS  : Fixed missing M03 on tool restart
+; Rev 1.4 :03.11.2019 GS  : Fixed missing G99/G98
+; Rev 1.5 :03.27.2019 GS  : Resolved issues with G76 threading cycle
+; Rev 1.6 :03.28.2019 GS  : Fixed X code in G195
+;						  : Moved M14 to above S spin in tapping
+;						  : Added S Spin in tapping
+; Rev 1.7 :03.28.2019 GS  : Correction to F rate when OD milling
+; Rev 1.8 :03.28.2019 GS  : Forced G99 on tapping operation and Feed_teeth for IPR
+; Rev 1.9 :03.28.2019 GS  : Changed D Value on Finish thread to be K - .001 due to machine error
+; Rev 2.0 :06.11.2019 GS  : Changed Feed_teeth back to Feed for Lathe Drilling to correct IPR issue
+
+; Rev 3.0 :06.11.2019 GS  : Initial version for MDI
+; ---Things to do-----
+;
+
+
+
+
+@init_post
+
+    global numeric  nPos<<5>> nPrevPos<<5>> nPosArc<<4>> nMainDircode<<3>> nSubDircode<<3>> nLiveDircode<<4,3>> nSpindleDir nSpin nSpinLimit 
+    global numeric  nSpinType nFeedType nCSSLimitMode nCssOnCode nCssOffCode nFeedPerMinCode nFeedPerRevCode nFeedInverseTimeCode n4xFeedDia 
+    global numeric  nMainSpindleCode nSubSpindleCode nMainTurnCode nSubTurnCode nMainMillCode nSubMillCode nActiveSpindle nMillturnmode
+    global numeric  nSpindleClampMode nMainClampCode nMainUnclampCode nSubClampCode nSubUnclampCode nWorkoffset save_blocknum<<4>> nSpeedType
+    global numeric  nHomeOffset nFeed nSpinSelectP nMainSpinP nSubSpinP nLiveSpinP<<4>> nR2UnclampCode nR2ClampCode nR2ClampMode 
+    global numeric  nMainGear<<4>>  nSubGear<<4>> nMillGear<<4>>  nGear nOffset
+
+    global string   xMillSubmachine<<4>> xMillCart<<4>> yMillSubmachine<<4>> yMillCart<<4>> zMillSubmachine<<4>>  xTurnSubmachine<<4>> yTurnSubmachine<<4>> zTurnSubmachine<<4>> 
+    global string   r1Submachine<<4>> r2Submachine<<4>> nFeedType_f cCb cCe tool_position_in_turret_f tool_number_f sPrevJobType
+    global string   nPos_f<<5>> nPosArc_f<<4>> iMotionmode_f iAbsincmode_f iMplane_f  nSpindleDir_f sSpinTurn<<2>> sSpinLive<<4>> nSpin_f
+    global string   nActiveSpindle_f nMillturnmode_f nSpindleClampMode_f nWorkoffset_f cPn cPb cPe sUS_date sUS_time iDiametercomp_f
+    global string   iDiameteroffset_f sChFileSuffix<<4>> sCamfilepath sChFilePath<<4>> iSyncCode_f nSpeedType_f nCSSLimitMode_f nSpinLimit_f
+    global string   dwell_f nFeed_f nSpinSelectP_f xMCO_F yMCO_F zMCO_F r1MCO_f r2MCO_f nR2ClampMode_f nGear_f nOffset_f sSpindleDir<<3>>
+    global string   pMes<<10>> sPostRev
+    global string   sHomestrFileBegin<<2>> sHomestrtc<<2>> sHomestrFileEnd<<2>> cHomep<<2>> sHomeline<<2>>
+    
+    global logical  bSubs bTlchg bAbsolute bTapFeedPerRev bTlchg bFirstTC<<4>> bManualTC bInitialMove bFirstMove bFirstLineMove bFirstCut  
+    global logical  bOutputToolMessage bSolidCamArcPlane b1stRotary<<4>> b2ndRotary<<4>> b3axRapids bUseSpindleSelection bMillturnmodetc
+    global logical  bWorkoffsettc bUseprognum bUseprogname bUseFileName bCompTypeOutput bPostRevOutput bDateTimeOutput bCartesian
+    global logical  bDiameterCompOutputD bUseSpindlMode bFlipMainRapid bFlipSubRapid bYaxisExist<<4>> bYaxisTurning<<4>> bFirstRapid
+    global logical  bOutputLocations bFilePerChannel bOptstpbegin bOptstptc bOptstpend bOutputUserMessages bMco bUseSpindleGears bUseSpindleGearsMilling
+    global logical  bOutputABSINC bOutputToolList bTlseperation bSimpleOffsets  
+    
+    global integer  iSpindleAxis iTurnPosSet<<4>> i3xPosSet<<4>> i5xPosSet<<4>> iCartPosSet<<4>> iMcoMachPosSet iMcoPartPosSet iArcmode iTurnArcmode 
+    global integer  iAbsincmode iMotionmode iMplane iMainDircode<<3>> iSubDircode<<3>> iLiveDircode<<4,3>> iRotaryFeedType iRposControl<<4>>
+    global integer  iSpindleAxis iPrevSubMachID iPreviousSpindle iSpindleClamp iWorkOffsetmode iSplit_ProgName_Num iProgendmode     
+    global integer  iCoolantM<<100>> iCoolantON<<30>> iCoolantOFF<<30>> iDiametercomp iDiameteroffset iOperationMessage iNumChannels 
+    global integer  iStopmode iSyncCode sync_status_s iJobType iAxisFirst iHomingmode iNumSeparationLines iNumberStations<<2>> iNcount
+    
+    ;Solidcam Settings       
+    clear_change_after_gen = 1
+    
+    call @init_cycles          
+    call @usr_ip_useroptions                  
+    call @usr_ip_postwriteroptions(('all'),(0),(0)) ;((procedure needed),(level),(bSubs Setting 0-true 1-false))
+
+    
+endp
+
+inc "gMT_Doosan_2000Y_MDI_Cycles" ; Include File For Cycles
+
+@usr_ip_useroptions
+    
+               ;--------- Tool Change ---------             
+    bOutputToolMessage             = true         ;True = Outputs Tool Message at Tool Change
+    bSimpleOffsets                 = false        ;True = Station#/Tool# False = Station/Letter  
+    iNumberStations<<1>>           = 12           ;Number of stations for Channel 1 Turret 
+    iNumberStations<<2>>           = 12           ;Number of stations for Channel 2 Turret                                  
+               ;--------- Program Header & End ---------
+    bUseprognum                    = true         ;True = Outputs Program Number
+    bUseprogname                   = true         ;True = Outputs Program Name
+    iSplit_ProgName_Num            = 0            ;Sets if Program Name and Number are on separate lines (0=No, 1=Name->Number, 2=Number->Name)
+    bUseFileName                   = true         ;True = Outputs Gcode file name at beginning of file
+    bCompTypeOutput                = true         ;True = Outputs the Cutter Compensation type as a message (i.e. (COMPENSATION-WEAR) ) 
+    bPostRevOutput                 = true         ;True = Outputs the Post Revision as a message (i.e. (REV-0.61) )
+    sPostRev                       = '3.1'      ; Post Rev
+    bDateTimeOutput                = true         ;True = Outputs Date & Time
+    bOutputToolList                = true         ;True = Outputs Tool List
+    bTlseperation                  = true   
+    iNumSeparationLines            = 1
+    cPn                            = 'O'          ;Sets the Character(s) before program number (i.e. 'O', ':', or nothing)           
+    cPb                            = '%'          ;Sets the Character(s) used for the beginning of file (i.e %)
+    cPe                            = '%'          ;Sets the Character(s) used for the beginning of file (i.e %)           
+    cCb                            = '('          ;Sets the begginning Character(s) for comments
+    cCe                            = ')'          ;Sets the ending Character(s) for comments
+    iProgendmode                   = 1            ;Sets the code for ending a program (1=M30,2=M2)
+    
+               ;--------- Motion (Lines,Arc,Raid,etc) ---------
+    bOutputABSINC                  = false        ;Output Abs Inc Codes (i.e. G90/G91) 
+    iArcmode                       = 2            ;Sets Arc Output Mode (1=AbsIJK,2=IncIJK,3=R 360AbsIJK,4=R 360IncIJK)
+    iTurnArcmode                   = 4            ;Sets Turning Arc Output Mode (1=AbsIJK, 2=IncIJK, 3=R 360AbsIJK, 4=R 360IncIJK)
+    bSolidCamArcPlane              = True         ;Set Arc Plane Output (True=SolidCam, Flase=Set From Logic) 
+    b3axRapids                     = false        ;Sets Rapid Type (False= Spindle and Traverse rapids, True= X,Y,Z, Rapids)
+    bFlipMainRapid                 = false        ;Used to flip direction of rapid check (Spindle going down or up)
+    bFlipSubRapid                  = false        ;Used to flip direction of rapid check (Spindle going down or up)
+    iAxisFirst                     = 2            ;First Rapid Always Move First (0 = Auto, 1 = XY then Z, 2 = ZY then X)
+    
+               ;--------- Cutter Compensation ---------
+    bDiameterCompOutputD           = false         ;Outputs D number when turning on Cutter Compensation (i.e. G41 D1)
+    
+               ;--------- Optional Stops (M01) ---------
+    bOptstpbegin                   = false        ;True = Outputs Optional Stop at beginning of program
+    bOptstptc                      = true         ;True = Outputs Optional Stop between Tool Changes
+    bOptstpend                     = true        ;True = Outputs Optional Stop at end of program
+
+               ;--------- Work Offset ---------
+    iWorkOffsetmode       = 1                     ;Sets the Mode used for Work Offset (0=OFF, 1=G54, 2=E1, 3=G54.1 P1)
+    nWorkoffset_f         = '<G>2/2.0(p)< >'      ;Sets formatting output for workoffset   
+    bWorkoffsettc         = true                  ;True = Forces output of Work Offset at each Tool Change
+    nHomeOffset           = 53                    ;Machine Home Offset Value 
+                
+                
+               ;--------- Feeds and Speeds ---------
+    nCSSLimitMode                  = 50           ;Sets G/M code for "Constant Surface Limit"
+    nCssOnCode                     = 96           ;Sets G/M code for "Constant Surface Speed On"
+    nCssOffCode                    = 97           ;Sets G/M code for "Constant Surface Speed Off"
+    nFeedPerMinCode                = 98           ;Sets G/M code for "Feed Per Minute"
+    nFeedPerRevCode                = 99           ;Sets G/M code for "Feed Per Revolution"
+    nFeedInverseTimeCode           = 93           ;Sets G/M code for "Inverse Time Feed rate"
+    iRotaryFeedType                = 3            ;Sets Rotary feed output (1=Inch/MM per Min, 2=Haas Inch/Min 4x diameter 3=Deg/min, 4=InverseFeed)
+    n4xFeedDia                     = 1.0          ;Sets Feed Diameter from controller (HAAS #102 Lathe, HAAS #34 Mill)
+	
+	            ;--------- Spindle Gear Settings ------
+    bUseSpindleGears               = false        ;Set ture to output M code for Spindle Gears
+    bUseSpindleGearsMilling        = false        ;Set true to output Gear Codes For Turret or Milling Head
+    nMainGear<<1>>                 = 41           ;Mcode for Gear 1 Main Spindle
+    nMainGear<<2>>                 = 42           ;Mcode for Gear 2 Main Spindle
+    nMainGear<<3>>                 = 99           ;Mcode for Gear 3 Main Spindle
+    nMainGear<<4>>                 = 99           ;Mcode for Gear 4 Main Spindle
+    nSubGear<<1>>                  = 99           ;Mcode for Gear 1 Sub Spindle       
+    nSubGear<<2>>                  = 99           ;Mcode for Gear 2 Sub Spindle
+    nSubGear<<3>>                  = 99           ;Mcode for Gear 2 Sub Spindle   
+    nMillGear<<1>>                 = 99           ;Mcode for Gear 1 Milling Spindle   
+    nMillGear<<2>>                 = 99           ;Mcode for Gear 2 Milling Spindle
+    nMillGear<<3>>                 = 99           ;Mcode for Gear 3 Milling Spindle
+    nMillGear<<4>>                 = 99           ;Mcode for Gear 4 Milling Spindle
+
+               ;--------- Spindle & Live Tool Foward/Reverse/Stop Codes ---------          
+    nMainDircode<<1>>              = 3            ;Sets G/M code for "Main Spindle Forward"    (CW)
+    nMainDircode<<2>>              = 4            ;Sets G/M code for "Main Spindle Reverse"    (CCW)
+    nMainDircode<<3>>              = 5            ;Sets G/M code for "Main Spindle Stop" 
+    nSubDircode<<1>>               = 143         ;Sets G/M code for "Sub Spindle Forward"     (CW)
+    nSubDircode<<2>>               = 144          ;Sets G/M code for "Sub Spindle Reverse"     (CCW)
+    nSubDircode<<3>>               = 145          ;Sets G/M code for "Sub Spindle Stop"
+    nLiveDircode<<1,1>>            = 33          ;Sets G/M code for "Submachine 1  Forward" (CW)
+    nLiveDircode<<1,2>>            = 34          ;Sets G/M code for "Submachine 1  Reverse" (CCW)
+    nLiveDircode<<1,3>>            = 35          ;Sets G/M code for "Submachine 1  Stop"
+    nLiveDircode<<2,1>>            = 33          ;Sets G/M code for "Submachine 2  Forward" (CW)
+    nLiveDircode<<2,2>>            = 34          ;Sets G/M code for "Submachine 2  Reverse" (CCW)
+    nLiveDircode<<2,3>>            = 35          ;Sets G/M code for "Submachine 2  Stop"
+    nLiveDircode<<3,1>>            = 999          ;Sets G/M code for "Submachine 3  Forward" (CW)
+    nLiveDircode<<3,2>>            = 999          ;Sets G/M code for "Submachine 3  Reverse" (CCW)
+    nLiveDircode<<3,3>>            = 999          ;Sets G/M code for "Submachine 3  Stop"
+    nLiveDircode<<4,1>>            = 999          ;Sets G/M code for "Submachine 4  Forward" (CW)
+    nLiveDircode<<4,2>>            = 999          ;Sets G/M code for "Submachine 4  Reverse" (CCW)
+    nLiveDircode<<4,3>>            = 999          ;Sets G/M code for "Submachine 4  Stop"
+                                                    
+               ;--------- Spindles and Mill/Turn modes ---------
+    bUseSpindleSelection           = false         ;True = Outputs G/M code for "Spindle Selection"(Main/Sub) 
+    bUseSpindlMode                 = true         ;True = Outputs G/M code for "Spindle Mode"(Turn/Mill)  
+    nMainSpindleCode               = 15          ;Sets G/M code for "Main Spindle Selection" 
+    nMainTurnCode                  = 35          ;Sets G/M code for "Main Spindle Turning Mode"
+    nMainMillCode                  = 34          ;Sets G/M code for "Main Spindle Milling Mode"
+    nSubSpindleCode                = 14           ;Sets G/M code for "Sub Spindle Selection" 
+    nSubTurnCode                   = 246          ;Sets G/M code for "Sub Spindle Turning Mode"   
+    nSubMillCode                   = 245          ;Sets G/M code for "Sub Spindle Milling Mode"
+                                                
+                   ;--------- Clamp and Unclamp ---------
+    iSpindleClamp                  = 0            ;For forcing CLAMP or UNCLAMP (i.e. Drill 4x Cycles) (0=ignore, 1=clamp,2 =unclamp,3= no output)
+    nMainClampCode                 = 89        ;Sets G/M code for "Main Spindle Clamp"
+    nMainUnclampCode               = 90        ;Sets G/M code for "Main Spindle Unclamp"
+    nSubClampCode                  = 114       ;Sets G/M code for "Main Spindle Clamp"
+    nSubUnclampCode                = 115       ;Sets G/M code for "Main Spindle Unclamp"
+    nR2UnclampCode                 = 442       ;Sets G/M code for "2nd Rotary Unclamp" 
+    nR2ClampCode                   = 443       ;Sets G/M code for "2nd Rotary Clamp" 
+   
+               ;--------- Submachine 1 Output Settings ---------
+    iTurnPosSet<<1>>               = 3            ;turn   - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i3xPosSet<<1>>                 = 3            ;3 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i5xPosSet<<1>>                 = 3            ;5 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iCartPosSet<<1>>               = 1            ;Cartesian - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iRposControl<<1>>              = 0            ;Rotary Position Control (-1=No Rotary,0=SolidCAM Direct,1=Positive,2=Negative,3=Shortest Distance)
+    b1stRotary<<1>>                = true         ;false= no 1st rotary, true= yes 1st rotary 
+    b2ndRotary<<1>>                = false        ;false= no 2nd rotary, true= yes 2nd rotary 
+    bYaxisExist<<1>>               = true        ;false= no Y axis, true= yes Y axis 
+    bYaxisTurning<<1>>             = false        ;false= no Y axis turning, true= yes Y axis turning
+    
+              ;--------- Submachine 2 Output Settings ---------
+    iTurnPosSet<<2>>               = 3            ;turn   - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i3xPosSet<<2>>                 = 3            ;3 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i5xPosSet<<2>>                 = 3            ;5 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iCartPosSet<<2>>               = 1            ;Cartesian - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iRposControl<<2>>              = 0            ;Rotary Position Control (-1=No Rotary,0=SolidCAM Direct,1=Positive,2=Negative,3=Shortest Distance)
+    b1stRotary<<2>>                = true         ;false= no 1st rotary, true= yes 1st rotary 
+    b2ndRotary<<2>>                = false        ;false= no 2nd rotary, true= yes 2nd rotary
+    bYaxisExist<<2>>               = true         ;false= no Y axis, true= yes Y axis
+    bYaxisTurning<<2>>             = false        ;false= no Y axis turning, true= yes Y axis turning
+    
+              ;--------- Submachine 3 Output Settings ---------
+    iTurnPosSet<<3>>               = 3            ;turn   - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i3xPosSet<<3>>                 = 3            ;3 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i5xPosSet<<3>>                 = 3            ;5 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iCartPosSet<<3>>               = 1            ;Cartesian - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iRposControl<<3>>              = 0            ;Rotary Position Control (-1=No Rotary,0=SolidCAM Direct,1=Positive,2=Negative,3=Shortest Distance)
+    b1stRotary<<3>>                = true         ;false= no 1st rotary, true= yes 1st rotary 
+    b2ndRotary<<3>>                = false        ;false= no 2nd rotary, true= yes 2nd rotary
+    bYaxisExist<<3>>               = false         ;false= no Y axis, true= yes Y axis
+    bYaxisTurning<<4>>             = false        ;false= no Y axis turning, true= yes Y axis turning
+    
+              ;--------- Submachine 4 Output Settings ---------
+    iTurnPosSet<<4>>               = 3            ;turn   - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i3xPosSet<<4>>                 = 3            ;3 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    i5xPosSet<<4>>                 = 3            ;5 axis - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iCartPosSet<<4>>               = 1            ;Cartesian - 0= pos 1= hpos 2= mpos 3= opos 4= lpos 5= tpos 6= topos 7= rpos 8= rtpos
+    iRposControl<<4>>              = 0            ;Rotary Position Control (-1=No Rotary,0=SolidCAM Direct,1=Positive,2=Negative,3=Shortest Distance)
+    b1stRotary<<4>>                = true         ;false= no 1st rotary, true= yes 1st rotary 
+    b2ndRotary<<4>>                = false        ;false= no 2nd rotary, true= yes 2nd rotary
+    bYaxisExist<<4>>               = false         ;false= no Y axis, true= yes Y axis
+    bYaxisTurning<<4>>             = false        ;false= no Y axis turning, true= yes Y axis turning
+    
+              ;--------- MCO Output Settings ---------    
+    iMcoPartPosSet                 = 1            ;Part Mode Mco    - 1= hpos 2= mpos 5= tpos 7= rpos 8= rtpos
+
+              ;--------- Drilling ---------
+    bTapFeedPerRev        = true       ;1.00: True = Feed Per Rev(G99) is output during Tapping Cycles
+
+              ;--------- Coolant Settings ---------              
+    iCoolantON<<1>>                = 8              ;Sets Code: Flood_coolant ON         
+    iCoolantOFF<<1>>               = 9              ;Sets Code: Flood_coolant OFF        
+    iCoolantON<<2>>                = 88              ;Sets Code: HP_flood_coolant ON      
+    iCoolantOFF<<2>>               = 89              ;Sets Code: HP_flood_coolant OFF     
+    iCoolantON<<3>>                = 8              ;Sets Code: LP_flood_coolant ON      
+    iCoolantOFF<<3>>               = 9              ;Sets Code: LP_flood_coolant OFF     
+    iCoolantON<<4>>                = 8              ;Sets Code: flood_ival_coolant ON    
+    iCoolantOFF<<4>>               = 9              ;Sets Code: flood_ival_coolant OFF   
+    iCoolantON<<5>>                = 7              ;Sets Code: mist_coolant ON          
+    iCoolantOFF<<5>>               = 9              ;Sets Code: mist_coolant OFF         
+    iCoolantON<<6>>                = 8              ;Sets Code: HP_mist_coolant ON       
+    iCoolantOFF<<6>>               = 9              ;Sets Code: HP_mist_coolant OFF      
+    iCoolantON<<7>>                = 7              ;Sets Code: LP_mist_coolant ON       
+    iCoolantOFF<<7>>               = 9              ;Sets Code: LP_mist_coolant OFF      
+    iCoolantON<<8>>                = 8              ;Sets Code: mist_ival_coolant ON     
+    iCoolantOFF<<8>>               = 9              ;Sets Code: mist_ival_coolant OFF    
+    iCoolantON<<9>>                = 150            ;Sets Code: through_coolant ON       
+    iCoolantOFF<<9>>               = 9              ;Sets Code: through_coolant OFF      
+    iCoolantON<<10>>               = 8              ;Sets Code: HP_through_coolant ON    
+    iCoolantOFF<<10>>              = 9              ;Sets Code: HP_through_coolant OFF   
+    iCoolantON<<11>>               = 8              ;Sets Code: LP_through_coolant ON    
+    iCoolantOFF<<11>>              = 9              ;Sets Code: LP_through_coolant OFF   
+    iCoolantON<<12>>               = 8              ;Sets Code: through_ival_coolant ON  
+    iCoolantOFF<<12>>              = 9              ;Sets Code: through_ival_coolant OFF 
+    iCoolantON<<13>>               = 12              ;Sets Code: air_blast_coolant ON     
+    iCoolantOFF<<13>>              = 13              ;Sets Code: air_blast_coolant OFF    
+    iCoolantON<<14>>               = 8              ;Sets Code: air_through_coolant ON   
+    iCoolantOFF<<14>>              = 9              ;Sets Code: air_through_coolant OFF  
+    iCoolantON<<15>>               = 8              ;Sets Code: minimum_quantity_L ON    
+    iCoolantOFF<<15>>              = 9              ;Sets Code: minimum_quantity_L OFF   
+    iCoolantON<<16>>               = 8              ;Sets Code: mach_flood_coolant ON
+    iCoolantOFF<<16>>              = 9              ;Sets Code: mach_flood_coolant OFF
+    iCoolantON<<17>>               = 8              ;Sets Code: mach_HP_flood_coolant ON
+    iCoolantOFF<<17>>              = 9              ;Sets Code: mach_HP_flood_coolant OFF
+    iCoolantON<<18>>               = 8              ;Sets Code: mach_LP_flood_coolant ON
+    iCoolantOFF<<18>>              = 9              ;Sets Code: mach_LP_flood_coolant OFF
+    iCoolantON<<19>>               = 8              ;Sets Code: mach_flood_ival_coolant ON
+    iCoolantOFF<<19>>              = 9              ;Sets Code: mach_flood_ival_coolant OFF
+    iCoolantON<<20>>               = 8              ;Sets Code: mach_mist_coolant ON
+    iCoolantOFF<<20>>              = 9              ;Sets Code: mach_mist_coolant OFF
+    iCoolantON<<21>>               = 8              ;Sets Code: mach_HP_mist_coolant ON
+    iCoolantOFF<<21>>              = 9              ;Sets Code: mach_HP_mist_coolant OFF
+    iCoolantON<<22>>               = 8              ;Sets Code: mach_LP_mist_coolant ON
+    iCoolantOFF<<22>>              = 9              ;Sets Code: mach_LP_mist_coolant OFF
+    iCoolantON<<23>>               = 8              ;Sets Code: mach_mist_ival_coolant ON
+    iCoolantOFF<<23>>              = 9              ;Sets Code: mach_mist_ival_coolant OFF
+    iCoolantON<<24>>               = 8              ;Sets Code: mach_active_air_coolant ON
+    iCoolantOFF<<24>>              = 9              ;Sets Code: mach_active_air_coolant OFF
+    iCoolantON<<25>>               = 8              ;Sets Code: mach_bed_rinsing_coolant ON
+    iCoolantOFF<<25>>              = 9              ;Sets Code: mach_bed_rinsing_coolant OFF
+    
+                   ;--------- Block/Line Numbering ---------
+    blknum_exist                   = false           ; True = Outputs Line Numbers
+    blknum                         = 5              ; Sets Starting Line Number
+    blknum_delta                   = 5              ; Sets the delta for Line Numbers
+    blknum_max                     = 3200000        ; Sets the maximum value for Line Numbers
+    
+                   ;--------- Misc. Options ---------
+    iOperationMessage              = 2              ;Controls output of Operation messge (0=off, 1=long style, 2=short style) 
+    bOutputLocations               = false           ;Output Names of Output Locations  
+    bOutputUserMessages            = true           ;true = outputs user messages (message field found in Operation - Misc parameters tab)
+    
+                   ;--------- Multiple Turret File Options ---------
+    bFilePerChannel                = false           ;true = Outputs a separate gcode file for each turret(channel)
+    sChFileSuffix<<1>>             = '_UT.NC'       ;Sets the Suffix for the Channel 1 file name '' = No File/Channel
+    sChFileSuffix<<2>>             = '_LLM.NC'      ;Sets the Suffix for the Channel 2 file name '' = No File/Channel
+    sChFileSuffix<<3>>             = '_LRS.NC'      ;Sets the Suffix for the Channel 3 file name '' = No File/Channel
+    sChFileSuffix<<4>>             = ''             ;Sets the Suffix for the Channel 4 file name '' = No File/Channel
+
+                   ;---------          Homing & Zero Returning axis             ---------
+               ;--------- Instructions and explaination of definition below ---------
+
+    ;  Format: [x][integer:][Prepstr :][AxisStr1 ;][AxisStrN]
+    ;  x       = Putting 'x' as the first character means "Homing Mode" must be set for each line (i.e. 'x2:G00 :Z0 ;3:G00 :X-15.0 ' )
+    ;  integer = Homing Output Mode (1=G28, 2=G28 G91, 3=G53 Non-Modal, 4=G53 Modal, 5=G30, 6=G30 G91, 7= any string)
+    ;  PrepStr = Sets the code(s) for the begging of line used for Homing Axis (i.e. 'G00')
+    ;  AxisStr = Homing Axis Definition (i.e. 'Z0.0', 'H0.0 W0.')
+    ;  Note: You can define up to 49 "Homing Lines" seperated by ";"
+    ;  Note: Only use ";" if using more then 1 "Homing Line"
+    ;  Note: Define string as empty '' to ignore Specific Homing Definition
+    
+    sHomestrFileBegin<<1>>    = '1:U0. V0.;W0.  '          ; Program Channel 1 Begin Homing Definition    
+    sHomestrtc<<1>>           = '3:X0. Y0.;Z0.  '          ; Tool Change Channel 1  Homing Definition
+    sHomestrFileEnd<<1>>      = '1:U0. V0.;W0.  '          ; Program Channel 1 End Homing Definition     
+    sHomestrFileBegin<<2>>    = '1:U0. V0.;W0.  '          ; Program Channel 2 Begin Homing Definition    
+    sHomestrtc<<2>>           = '1:U0. V0.;W0.  '          ; Tool Change Channel 2  Homing Definition
+    sHomestrFileEnd<<2>>      = '1:U0. V0.;W0.  '          ; Program Channel 2 End Homing Definition    
+    
+endp
+
+@usr_ip_postwriteroptions (string proc, integer level,logical subs) 
+    ; Handle setting of options -- For Post Writers
+    bSubs = subs          ;True = Using sub routines, False = Not using sub routines
+    
+    trace proc:level
+    ;trace "all":5
+    
+endp
+
+@usr_setformattingstrings
+    ;SET: Set formatting strings for controlling output of variables
+    
+    ;--------- System Dependent Formats ---------
+    if inch_system
+        ;X-Axis
+        xMillSubmachine<<1>>            = '<X>5.4(*2)< >'       
+        xMillSubmachine<<2>>            = '<X>5.4(*2)< >'
+        xMillSubmachine<<3>>            = '<X>5.4(*2)< >'
+        xMillSubmachine<<4>>            = '<X>5.4(*2)< >'
+        xMillCart<<1>>                  = '<X>5.4(*2)< >'
+        xMillCart<<2>>                  = '<X>5.4(*2)< >'
+        xMillCart<<2>>                  = '<X>5.4(*2)< >'
+        xMillCart<<4>>                  = '<X>5.4(*2)< >'
+        xTurnSubmachine<<1>>            = '<X>5.4(*2)< >'       
+        xTurnSubmachine<<2>>            = '<X>5.4(*2)< >'
+        xTurnSubmachine<<3>>            = '<X>5.4(*2)< >'
+        xTurnSubmachine<<4>>            = '<X>5.4(*2)< >'
+        xMCO_F                          = '5.4(*2)< >'
+        
+        ;Y-Axis
+        yMillSubmachine<<1>>            = '<Y>5.4< >'       
+        yMillSubmachine<<2>>            = '<Y>5.4< >'
+        yMillSubmachine<<3>>            = '<Y>5.4< >'
+        yMillSubmachine<<4>>            = '<Y>5.4< >'
+        yMillCart<<1>>                  = '<Y>5.4< >'
+        yMillCart<<2>>                  = '<Y>5.4< >'
+        yMillCart<<2>>                  = '<Y>5.4< >'
+        yMillCart<<4>>                  = '<Y>5.4< >'
+        yTurnSubmachine<<1>>            = '<Y>5.4< >'
+        yTurnSubmachine<<2>>            = '<Y>5.4< >'
+        yTurnSubmachine<<3>>            = '<Y>5.4< >'
+        yTurnSubmachine<<4>>            = '<Y>5.4< >'
+        yMCO_F                          = '5.4()< >'
+        
+        ;Z-Axis
+        zMillSubmachine<<1>>            = '<Z>5.4< >'       
+        zMillSubmachine<<2>>            = '<Z>5.4< >'
+        zMillSubmachine<<3>>            = '<Z>5.4< >'
+        zMillSubmachine<<4>>            = '<Z>5.4< >'
+        zTurnSubmachine<<1>>            = '<Z>5.4< >'
+        zTurnSubmachine<<2>>            = '<Z>5.4< >'
+        zTurnSubmachine<<3>>            = '<Z>5.4< >'
+        zTurnSubmachine<<4>>            = '<Z>5.4< >'
+        zMCO_F                          = '5.4()< >'
+        
+        ;First Rotary
+        r1Submachine<<1>>               = '<C>5.3< >' 
+        r1Submachine<<2>>               = '<P>5.3< >'
+        r1Submachine<<3>>               = '<C>5.3< >'
+        r1Submachine<<4>>               = '<P>5.3< >'
+        r1MCO_f                         = '5.3< >'
+        
+        ;Second Rotary
+        r2Submachine<<1>>               = '<B>5.3< >'
+        r2Submachine<<2>>               = '<B>5.3< >'
+        r2Submachine<<3>>               = '<B>5.3< >'
+        r2Submachine<<4>>               = '<B>5.3< >'
+        r2MCO_f                         = '5.3< >'
+        
+        ;Arc Center Points And Radius       
+        nPosArc_f<<1>>                  = '<I>5.4< >'
+        nPosArc_f<<2>>                  = '<J>5.4< >'
+        nPosArc_f<<3>>                  = '<K>5.4< >'
+        nPosArc_f<<4>>                  = '<R>5.4< >'
+        
+        ;Feed
+        nFeed_f                          = '<F>5.4< >'
+        
+        
+    else
+        ;X-Axis
+        xMillSubmachine<<1>>            = '<X>5.3(*2)< >'       
+        xMillSubmachine<<2>>            = '<X>5.3(*2)< >'
+        xMillSubmachine<<3>>            = '<X>5.3(*2)< >'
+        xMillSubmachine<<4>>            = '<X>5.3(*2)< >'
+        xMillCart<<1>>                  = '<X>5.3(*2)< >'
+        xMillCart<<2>>                  = '<X>5.3(*2)< >'
+        xMillCart<<2>>                  = '<X>5.3(*2)< >'
+        xMillCart<<4>>                  = '<X>5.3(*2)< >'
+        xTurnSubmachine<<1>>            = '<X>5.3(*2)< >'       
+        xTurnSubmachine<<2>>            = '<X>5.3(*2)< >'
+        xTurnSubmachine<<3>>            = '<X>5.3(*2)< >'
+        xTurnSubmachine<<4>>            = '<X>5.3(*2)< >'
+        xMCO_F                          = '5.3(*2)< >'
+        
+        ;Y-Axis
+        yMillSubmachine<<1>>            = '<Y>5.3< >'       
+        yMillSubmachine<<2>>            = '<Y>5.3< >'
+        yMillSubmachine<<3>>            = '<Y>5.3< >'
+        yMillSubmachine<<4>>            = '<Y>5.3< >'
+        yMillCart<<1>>                  = '<Y>5.3< >'
+        yMillCart<<2>>                  = '<Y>5.3< >'
+        yMillCart<<2>>                  = '<Y>5.3< >'
+        yMillCart<<4>>                  = '<Y>5.3< >'
+        yTurnSubmachine<<1>>            = '<Y>5.3< >'
+        yTurnSubmachine<<2>>            = '<Y>5.3< >'
+        yTurnSubmachine<<3>>            = '<Y>5.3< >'
+        yTurnSubmachine<<4>>            = '<Y>5.3< >'
+        yMCO_F                          = '5.3()< >'
+        
+        ;Z-Axis
+        zMillSubmachine<<1>>            = '<Z>5.3< >'       
+        zMillSubmachine<<2>>            = '<Z>5.3< >'
+        zMillSubmachine<<3>>            = '<Z>5.3< >'
+        zMillSubmachine<<4>>            = '<Z>5.3< >'
+        zTurnSubmachine<<1>>            = '<Z>5.3< >'
+        zTurnSubmachine<<2>>            = '<Z>5.3< >'
+        zTurnSubmachine<<3>>            = '<Z>5.3< >'
+        zTurnSubmachine<<4>>            = '<Z>5.3< >'
+        zMCO_F                          = '5.4()< >'
+        
+        ;First Rotary
+        r1Submachine<<1>>               = '<C>5.3< >' 
+        r1Submachine<<2>>               = '<S>5.3< >'
+        r1Submachine<<3>>               = '<C>5.3< >'
+        r1Submachine<<4>>               = '<S>5.3< >' 
+        r1MCO_f                         = '5.3< >'
+        
+        ;Second Rotary
+        r2Submachine<<1>>               = '<B>5.3< >'
+        r2Submachine<<2>>               = '<B>5.3< >'
+        r2Submachine<<3>>               = '<B>5.3< >'
+        r2Submachine<<4>>               = '<A>5.3< >'
+        r2MCO_f                         = '5.3< >'
+        
+        ;Arc Center Points And Radius        
+        nPosArc_f<<1>>                  = '<I>5.3< >'
+        nPosArc_f<<2>>                  = '<J>5.3< >'
+        nPosArc_f<<3>>                  = '<K>5.3< >'
+        nPosArc_f<<4>>                  = '<R>5.3< >'
+        
+        ;Feed
+        nFeed_f                          = '<F>5.3< >'
+    endif
+             ;--------- Main Sub Live Spindle Format ---------
+               
+    sSpinTurn<<1>>                      =  '<S>5.0(P)< >'            ;Main spindle RPM format
+    sSpinTurn<<2>>                      =  '<P>5.0(P)< >'            ;Sub spindle RPM format
+    sSpinLive<<1>>                      =  '<S>5.0(P)< >'            ;Submachine 1 Live spindle RPM format
+    sSpinLive<<2>>                      =  '<S>5.0(P)< >'            ;Submachine 2 Live spindle RPM format
+    sSpinLive<<3>>                      =  '<S>5.0(P)< >'            ;Submachine 3 Live spindle RPM format
+    sSpinLive<<4>>                      =  '<S>5.0(P)< >'            ;Submachine 4 Live spindle RPM format
+    sSpindleDir<<1>>                    =  '<M>2/3.0(n)< >'      	;Spindle Direction Main
+    sSpindleDir<<2>>                    =  '<M>2/3.0(n)< >'      	;Spindle Direction Sub
+    sSpindleDir<<3>>                    =  '<M>2/3.0(n)< >'     	 ;Spindle Direction Live
+   
+      ;---------------- Non Inch/Metric Dependent  ----------------
+             
+    
+    tool_position_in_turret_f           = '<T>2.0(p)<>'
+    nOffset_f                           = '<>2/2.0(p)< >'
+    iDiameteroffset_f                   = '<D>2/2.0(n)< >'
+             
+             ;--------- Gcodes  ---------
+    gcode_f                             = '<G>2/3.0(p)< >'      
+    nActiveSpindle_f                    = gcode_f    
+    iDiametercomp_f                     = gcode_f
+    iMotionmode_f                       = gcode_f
+    iAbsincmode_f                       = gcode_f
+    iMplane_f                           = gcode_f
+    nFeedType_f                         = gcode_f
+    nSpeedType_f                        = gcode_f
+    nCSSLimitMode_f                     = gcode_f
+    nSpin_f                             = '<G>5.0(p)< >'
+    
+            ;--------- Mcodes  ---------
+    mcode_f                             = '<M>2/3.0(n)< >'
+    nSpindleClampMode_f                 = mcode_f
+    nR2ClampMode_f                      = mcode_f   
+    nMillturnmode_f                     = mcode_f 
+    nGear_f                             = mcode_f
+    iSyncCode_f                         = '<M>3/3.0(n)< >'
+    
+            ;--------- MISC  ---------
+    nSpinLimit_f                        = '<S>5.0(p)< >'
+    dwell_f                             = '<P>0/1.3z(n)< >'
+    
+
+    iNcount = 100
+call @usr_setformattingstrings_cycles    
+    
+endp
+
+
+@start_of_file ;Program Start Sequence
+    
+    local integer trace_level i
+    local string UserName UserName1
+    
+    if bOutputLocations
+        {'Start Of File!!!!'}
+        {nb}
+    endif    
+    UserName = 'glpay'
+    UserName1 =  user_account
+    if UserName1 eq UserName
+        Input "Trace level : 0-None ; 5-All", trace_level
+        trace "all":trace_level
+    endif
+    
+    call @usr_setformattingstrings
+	call @usr_init_gmstates
+    
+    if bFilePerChannel        
+        call @usr_campart_path
+        i = 1
+        while i le 4
+            if sChFileSuffix<<i>> ne ''
+                iNumChannels = iNumChannels + 1
+            endif
+            i = i + 1
+        endw
+        i = 1
+        while i le iNumChannels
+            sChFilePath<<i>> = sCamfilepath + tostr(program_number:'4.0(p)') + sChFileSuffix<<i>>            
+            i = i + 1           
+        endw
+        i = 1
+        while i le iNumChannels            
+            call @usr_open_close_file (('open'),(i))
+            {nl}
+        	call @usr_sof_character
+        	call @usr_sof_progname
+        	{nb,cCb,'ChannelID='i,cCe}
+        	if bCompTypeOutput
+                {nb,cCb'COMPENSATION-WEAR'cCe}
+            endif
+            if bPostRevOutput
+                {nb,cCb,'Post Rev:',sPostRev,cCe}
+            endif
+            if bDateTimeOutput
+        	    call @usr_US_date
+                call @usr_US_time
+                {nb,cCb,sUS_date'-'sUS_time,cCe}
+            endif
+           ; pMes<<1>> = pMes1  
+           ; pMes<<2>> = pMes2
+           ; pMes<<3>> = pMes3
+           ; pMes<<4>> = pMes4
+           ; pMes<<5>> = pMes5
+           ; pMes<<6>> = pMes6
+           ; pMes<<7>> = pMes7
+           ; pMes<<8>> = pMes8
+           ; pMes<<9>> = pMes9
+           ; pMes<<10>> = pMes10
+           ; 
+           ; j = 1
+           ; while j le 10
+           ;     if pMes<<j>> ne ''
+           ;         {nl,cCb,pMes<<j>>,cCe}
+           ;     endif
+           ;     j = j + 1      
+           ; endw
+            
+            call @usr_open_close_file (('close'),(i))  
+            i = i + 1 
+        endw     
+    else
+        call @usr_sof_character
+    	call @usr_sof_progname
+    	if bCompTypeOutput
+            {nb,cCb'COMPENSATION-WEAR'cCe}
+        endif
+        if bPostRevOutput
+            {nb,cCb,'Post Rev:',sPostRev,cCe}
+        endif
+        if bDateTimeOutput
+    	    call @usr_US_date
+            call @usr_US_time
+            {nb,cCb,sUS_date'-'sUS_time,cCe}
+        endif  
+        
+       ; pMes<<1>> = pMes1  
+       ; pMes<<2>> = pMes2
+       ; pMes<<3>> = pMes3
+       ; pMes<<4>> = pMes4
+       ; pMes<<5>> = pMes5
+       ; pMes<<6>> = pMes6
+       ; pMes<<7>> = pMes7
+       ; pMes<<8>> = pMes8
+       ; pMes<<9>> = pMes9
+       ; pMes<<10>> = pMes10
+       ; 
+       ; j = 1
+       ; while j le 10
+       ;     if pMes<<j>> ne ''
+       ;         {nl,cCb,pMes<<j>>,cCe}
+       ;     endif
+       ;     j = j + 1      
+       ; endw               
+    endif
+
+endp
+
+@start_program ;Beginning of program (Before any tool changes)
+    local integer i
+    if bFilePerChannel
+        i = 1
+        while i le iNumChannels
+            call @usr_open_close_file (('open'),(i))
+            
+            if bOutputLocations
+                {nb,'Start Program!!!!'}
+            endif
+            
+            if bOptstpbegin
+                call @usr_optionalstop
+            endif
+
+            call @usr_open_close_file (('close'),(i))
+            i = i + 1
+        endw
+    else
+        if bOutputLocations
+            {nb,'Start Program!!!!'}
+        endif 
+        if bOptstpbegin
+            call @usr_optionalstop
+        endif     
+    endif        
+endp
+
+
+@start_of_job ;Operation Start Sequence
+    ; Handle what happens at start of operation(job)
+    ; If using Subs we do not make tool change in @start_of_job    
+    ; 1. MachinePlane for current Operation
+    if HSM_job eq 1
+        rot_axis_type = axis4_none
+    endif
+    if job_machine_type eq turning or job_machine_type eq milling
+        iJobType = job_machine_type
+    else        
+        iJobType = 1 ;Turning Default for MCO
+    endif
+    if ChannelID eq 0
+        ChannelID = 1
+    endif
+    
+    if bSimpleOffsets
+        nOffset = tool_number
+    else
+        nOffset = tool_position_in_turret + (tool_position - 1) * iNumberStations<<ChannelID>>
+    endif
+
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+    
+    if bOutputLocations
+        {nb,'Start Of Job!!!!'}
+    endif
+
+    call @machine_plane    
+    call @usr_axis_assignments
+    call @usr_spindle_selection
+    call @usr_millturn_mode
+    call @usr_SpeedType_mode
+    call @usr_home_number
+    
+    
+    ; Decide what type of tool change
+    if bManualTC        
+        call @usr_coolant_off
+        call @usr_coolant_output 
+        call @usr_gmstates_tc 
+        if bOptstptc
+            call @usr_optionalstop
+        endif 
+        if iOperationMessage eq 2
+            {nb, cCb,job_name,cCe}
+        endif       
+        call @usr_manual_tc        
+        bManualTC                       = false
+        bTlchg                          = false
+        bFirstTC<<ChannelID>>           = false
+        bInitialMove                    = true
+    elseif bTlchg and bFirstTC<<ChannelID>>  
+        call @usr_coolant_off
+        call @usr_gmstates_tc 
+        call @usr_prep_home_axis ((sHomestrFileBegin<<ChannelID>>))
+        if bOptstptc
+            call @usr_optionalstop
+        endif
+        if iOperationMessage eq 2
+            {nb, cCb,job_name,cCe}
+        endif     
+        call @usr_first_tC
+        bTlchg                          = false
+        bFirstTC<<ChannelID>>           = false
+        bInitialMove                    = true
+    elseif bTlchg         
+        call @usr_coolant_off
+        call @usr_spindledir_spinformat_mode ((iPrevSubMachID),(iPreviousSpindle),(false),(sPrevJobType),(true))
+        call @usr_coolant_output
+        call @usr_gmstates_tc
+        call @usr_prep_home_axis ((sHomestrtc<<ChannelID>>))  
+        if bOptstptc
+            call @usr_optionalstop
+        endif
+        if iOperationMessage eq 2
+            {nb, cCb,job_name,cCe}
+        endif 
+        call @usr_auto_tc
+        bTlchg                          = false
+        bInitialMove                    = true
+    else
+        if iOperationMessage eq 2
+		    call @usr_coolant_off
+            call @usr_spindledir_spinformat_mode ((iPrevSubMachID),(iPreviousSpindle),(false),(sPrevJobType),(true))
+		    {nb,'M01'}
+            {nb, cCb,job_name,cCe}
+			bInitialMove = true
+            change(nSpin) = true
+        endif
+    endif
+    
+    call @usr_coolant  
+    bFirstMove                      = true
+    bFirstLineMove                  = true
+    bFirstCut                       = true
+    
+    if bOutputUserMessages and !bMCO
+        call @usr_outputUserMessages
+    endif
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+    
+endp
+
+
+@usr_first_tC ;First Tool
+
+    
+    if bOutputLocations
+        {nb,'First TC!!!!'}
+    endif
+    {nb,'N',iNcount}
+    {nb,tool_position_in_turret,nOffset}
+    if bOutputToolMessage
+        {cCb,tool_message,cCe}
+    endif
+    
+    iNcount = (iNcount + 100)  
+
+endp
+
+
+@usr_auto_tc ;Auto Tool Change
+    
+    if bOutputLocations
+        {nb,'Auto TC!!!!'}
+    endif
+    {nb,'N',iNcount}
+    {nb,tool_position_in_turret,nOffset}
+    if bOutputToolMessage
+        {cCb,tool_message,cCe}
+    endif
+    if job_machine_type eq milling and tool_position ne 1
+        {nb,'M00 (SWAP TOOL) '}
+    endif
+    iNcount = (iNcount + 100)
+endp
+
+
+@usr_manual_tc ;Manual Tool Change
+    
+    if bOutputLocations
+        {nb,'Manual TC!!!!'}
+    endif
+    
+endp
+
+
+@usr_initial_move ;first move after TC
+    
+    if bOutputLocations
+        {nb,'Initial Move!!!!'}
+    endif
+   
+    if bUseSpindleSelection
+        call @usr_spindle_selection_output
+    endif
+    if bUseSpindlMode
+        call @usr_millturn_mode_output
+    endif
+    
+    if spin_unit eq css and iJobType eq 1
+        if change(nSpinLimit)
+			{nb, nCSSLimitMode, [nSpinLimit]}
+		endif
+	endif
+        
+    if bWorkoffsettc and iWorkOffsetmode ne 0
+        change(nWorkoffset) = true    
+    endif
+    
+    if change(nGear) and bUseSpindleGears
+        {nb,[nGear]}
+    endif  
+    
+    change(nSpeedType) = true
+	change(nSpindleDir) = true
+	
+	;if btap_direction  1 
+	;{nb 'M72'}
+	;{nb, [nSpeedType], nSpin, [nSpindleDir]}
+	;
+	;else
+	;	{nb, [nSpeedType], nSpin, [nSpindleDir]}
+	;endif
+    
+endp
+
+
+@usr_first_move ;first move new job no TC
+ 
+    if bOutputLocations
+        {nb,'First Move!!!!'} 
+    endif
+    
+    if bUseSpindleSelection
+        call @usr_spindle_selection_output
+    endif
+    if bUseSpindlMode
+        call @usr_millturn_mode_output
+    endif
+    
+
+    
+    if spin_unit eq css and iJobType eq 1
+        if change(nSpinLimit)
+			{nb, nCSSLimitMode, [nSpinLimit]}
+		endif
+	endif
+
+	if change (nSpin) or change(nSpindleDir) or change(nSpeedType) 
+	    if change(nGear) and bUseSpindleGears
+            {nb,[nGear]}
+        endif   
+			{nb, [nSpeedType], [nSpin], [nSpindleDir]}
+	endif
+        
+endp
+
+
+@usr_first_cut ;first line or arc move
+    
+    if bOutputLocations
+        {nb,'First Cut!!!!'}
+    endif
+    
+    
+endp
+
+
+@usr_first_linear_move ;first line move
+
+    if bOutputLocations
+        {nb,'First Linear Move!!!!'}
+    endif
+    
+endp
+
+
+@usr_line ;linear move
+    ; Handle output for line movement (G01)
+    ; Clamp/Unclamp
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+    
+    iMotionmode = 1
+       
+    if bFirstLineMove 
+        call @usr_first_linear_move
+        bFirstLineMove = false
+    endif
+    
+    if bFirstCut
+        call @usr_first_cut
+        bFirstCut = false
+    endif
+    
+    if rot_axis_type ne axis4_none and rot_axis_coord eq axis4_cartesian and !bCartesian 
+        bCartesian = true
+		{nb,'G17'}
+        {nb,'G12.1 (START OF COORDINATE CONVERSION)'}
+        call @usr_axis_assignments
+    endif 
+    
+    call @usr_control_pos_set (('line'))
+    call @usr_rpos_calc
+    call @usr_setfeed
+    if iSpindleClamp ne 3
+        call @usr_clamp_unclamp_spindle
+    endif
+    
+        
+    {nb, [nFeedType], [iMotionmode], [iAbsincmode], [iMplane],  [nSpin], [nSpindleDir],[iDiametercomp] [nPos<<1>>], [nPos<<2>>], [nPos<<3>>], [nPos<<4>>], [nPos<<5>>], [iDiameteroffset], [nFeed] }
+    
+    call @usr_Set_nPrevPos
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+endp
+
+
+@usr_arc ;Circular move
+    ; Handle output for arc movement (G02/G03)
+    ; Clamp/Unclamp
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+    
+    if arc_direction eq CCW then
+        iMotionmode = 3
+    else
+        iMotionmode = 2
+    endif
+    
+    if bFirstCut
+        call @usr_first_cut
+        bFirstCut = false
+    endif
+    
+    if rot_axis_type ne axis4_none and rot_axis_coord eq axis4_cartesian and !bCartesian 
+        bCartesian = true
+		{nb,'G17'}
+        {nb,'G12.1 (START OF COORDINATE CONVERSION)'}
+        call @usr_axis_assignments
+    endif 
+    
+    call @usr_control_pos_set (('arc'))
+    call @usr_rpos_calc
+    call @usr_setfeed 
+    if iSpindleClamp ne 3
+        call @usr_clamp_unclamp_spindle
+    endif 
+    
+    
+    
+    {nb, [nFeedType], [iMotionmode], [iAbsincmode], [iMplane],[iDiametercomp] [nPos<<1>>], [nPos<<2>>], [nPos<<3>>], [nPosArc<<4>>], [nPosArc<<1>>], [nPosArc<<2>>], [nPosArc<<3>>], [iDiameteroffset], [nFeed]}
+    
+    call @usr_Set_nPrevPos
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+endp
+
+
+@usr_rapid ;Rapid Move
+    local integer i j bLT
+    local logical bMovingDown bOutputSpindle   
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+       
+    iMotionmode = 0
+    
+    call @usr_control_pos_set (('rapid'))
+    call @usr_rpos_calc
+    if iSpindleClamp ne 3
+        call @usr_clamp_unclamp_spindle
+    endif
+  
+    if bInitialMove
+        call @usr_initial_move
+        bInitialMove = false
+        bFirstMove = false
+        bFirstRapid = true
+		change(nSpin)= false
+    elseif bFirstMove
+        call @usr_first_move
+        bFirstMove = false
+        bFirstRapid = true
+    endif
+    
+    if change(nPos<<iSpindleAxis>>)
+        if (spindle eq 0 and !bFlipMainRapid) or (spindle eq 1 and bFlipSubRapid)              
+            if nPos<<iSpindleAxis>> lt nPrevPos<<iSpindleAxis>> 
+                bMovingDown = true
+            else           
+                bMovingDown = false           
+            endif
+        elseif (spindle eq 0 and bFlipMainRapid) or (spindle eq 1 and !bFlipSubRapid)
+            if nPos<<iSpindleAxis>> gt nPrevPos<<iSpindleAxis>> 
+                bMovingDown = true
+            else           
+                bMovingDown = false           
+            endif     
+        endif   
+    endif 
+    if iAxisFirst eq 2 and bFirstRapid 
+        iSpindleAxis = 1
+        bMovingDown = true       
+    elseif iAxisFirst eq 1 and bFirstRapid
+        iSpindleAxis = 3
+        bMovingDown = true
+    endif
+    
+    if bCartesian
+        bCartesian = false
+        {nb,'G113 (END OF COORDINATE CONVERSION)'}
+        call @usr_axis_assignments
+    endif   
+    if !b3axRapids or bFirstRapid
+        i=2
+        while  i gt 0
+            if change(nPos<<iSpindleAxis>>) and !bMovingDown or (change(nPos<<iSpindleAxis>>) and bOutputSpindle)
+                ;X Spindle
+                if iSpindleAxis eq 1
+                    {nb, [iMotionmode], [iAbsincmode], [iMplane], [nPos<<1>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+                endif
+                ;Y Spindle
+                if iSpindleAxis eq 2
+                    {nb, [iMotionmode], [iAbsincmode], [iMplane], [nPos<<2>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+                endif
+                ;Z SPindle
+                if iSpindleAxis eq 3
+                    {nb, [iMotionmode], [iAbsincmode], [iMplane], [nPos<<3>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+                endif
+            endif   
+            ;XY Traverse            
+            if iSpindleAxis eq 3 and (change(nPos<<1>>)  or change(nPos<<4>>) or change(nPos<<5>>))
+                {nb, [iMotionmode], [iAbsincmode], [iMplane], [nWorkoffset], [nPos<<1>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+            endif
+            ;XZ Traverse
+            if iSpindleAxis eq 2 and (change(nPos<<1>>) or change(nPos<<3>>) or change(nPos<<4>>) or change(nPos<<5>>))
+                {nb, [iMotionmode], [iAbsincmode], [iMplane], [nWorkoffset], [nPos<<1>>], [nPos<<3>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+            endif
+            ;YZ Traverse
+            if iSpindleAxis eq 1 and  (change(nPos<<3>>) or change(nPos<<4>>) or change(nPos<<5>>))
+                {nb, [iMotionmode], [iAbsincmode], [iMplane], [nWorkoffset], [nPos<<3>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+            endif
+            bOutputSpindle = true       
+            i=i-1
+        endw 
+        if change(nPos<<2>>) 
+			
+            {nb, [iMotionmode], [iAbsincmode], [iMplane], [nWorkoffset], [nPos<<2>>]}
+        endif
+    else    
+    ; x y z    
+        {nb, [iMotionmode], [iAbsincmode], [iMplane], [nWorkoffset], [nPos<<1>>], [nPos<<2>>], [nPos<<3>>], [nPos<<4>>], [nPos<<5>>], [nSpin], [nSpindleDir]}
+    endif
+	
+	if iSpindleClamp ne 3
+        call @usr_clamp_unclamp_spindle
+    endif
+    
+    if bFirstRapid
+        if bMco
+            call @usr_coolant_reset
+            call @usr_coolant
+        endif
+        call @usr_coolant_output
+    endif
+    
+    bFirstRapid = false
+    call @usr_Set_nPrevPos
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+endp
+
+@end_of_job
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+    
+    if bOutputLocations
+        {nb,'End Of Job!!!!'}
+    endif
+    ; Handle what happens at end of operation(job)
+    ;pass info to next job
+    
+    iPrevSubMachID = submachine_ID
+    iPreviousSpindle = spindle
+    
+    if iJobType eq 1
+        sPrevJobType = 'turning'
+    elseif  iJobType eq 0
+        sPrevJobType = 'milling'
+    endif
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+
+endp
+
+@end_program
+    
+    local integer i
+    if bFilePerChannel
+        i = 1
+        while i le iNumChannels
+            call @usr_open_close_file (('open'),(i))          
+              
+            if bOutputLocations
+                {nb,'End Program!!!!'}
+            endif
+            if bOptstpend
+                call @usr_optionalstop
+            endif
+              
+            call @usr_open_close_file (('close'),(i))
+            i = i + 1
+        endw
+    else
+                                
+        if bOutputLocations
+            {nb,'End Program!!!!'}
+        endif
+        if bOptstpend
+            call @usr_optionalstop
+        endif
+     
+    endif
+
+endp
+
+@end_of_file
+    ; Handle end of file character
+    local integer i
+    if bFilePerChannel
+        i = 1
+        while i le iNumChannels
+            call @usr_open_close_file (('open'),(i))          
+            if bOutputLocations
+                {nb,'End Of File!!!!'}
+            endif
+            call @usr_coolant_off
+            call @usr_spindledir_spinformat_mode ((iPrevSubMachID),(iPreviousSpindle),(false),(sPrevJobType),(true))
+            call @usr_coolant_output
+            call @usr_prep_home_axis ((sHomestrFileEnd<<ChannelID>>))
+            if iProgendmode eq 1
+                {nb, 'M30 '}
+            elseif iProgendmode eq 2
+                {nb, 'M2 '}
+            endif
+            if cPe ne ''
+                {nl,cPe}
+            endif   
+            call @usr_open_close_file (('close'),(i))
+            i = i + 1
+        endw
+    else
+    
+        if bOutputLocations
+            {nb,'End Of File!!!!'}
+        endif
+        call @usr_coolant_off
+        call @usr_spindledir_spinformat_mode ((iPrevSubMachID),(iPreviousSpindle),(false),(sPrevJobType),(true))
+        call @usr_coolant_output
+        call @usr_prep_home_axis ((sHomestrFileEnd<<ChannelID>>))
+        if iProgendmode eq 1
+            {nb, 'M30 '}
+        elseif iProgendmode eq 2
+            {nb, 'M2 '}
+        endif
+        if cPe ne ''
+            {nl,cPe}
+        endif
+    endif
+    
+endp
+
+;------------------------------------------------------------
+
+
+
+@usr_SpeedType_mode 
+    ; SET: Set "SpeedType" mode (CSS/RPM)
+    ; FYI - It appears spin_unit is good for both Turning and Milling????!@#$%AC
+	if spin_unit eq css
+		nSpeedType = nCssOnCode
+		
+	endif
+	if spin_unit eq rpm
+		nSpeedType = nCssOffCode
+	endif
+endp
+
+@sync_process
+    if bFilePerChannel
+        call @usr_open_close_file (('open'),(ChannelID))
+    endif
+    
+    ;if sync_status eq 1 and sync_status_s eq 0
+        iSyncCode= sync_label+100
+    ;endif
+    
+    {nb,iSyncCode}
+    
+    if bFilePerChannel
+        call @usr_open_close_file (('close'),(ChannelID))
+    endif
+    
+    ;sync_status_s = sync_status
+    
+endp
+
+@usr_outputUserMessages
+    ; Handle output of UserMessages(Message field in Operation)
+    ; Special routine below for multiple line messages
+    local integer i poz1 l1b pr1
+    local string msg1 msg1a msg1b
+    
+    if msg ne ''        
+        i = 1
+        while i < 50
+            i = i + 1
+            poz1=instr(msg,'\n')
+            if poz1 eq 0
+                poz1=strlen(msg)
+                msg1=msg
+            else
+                poz1 = poz1-2
+                msg1=left(msg,poz1)
+            endif
+            {nb, cCb,msg1,cCe}
+            poz1=instr(msg,'\n')
+            if poz1 eq 0
+                i = 51
+            else
+                l1b=strlen(msg)-strlen(msg1)
+                pr1=poz1+1
+                msg1b=substr(msg,pr1,l1b)
+                msg=msg1b
+            endif
+        endw
+    endif
+endp
+
+@usr_optionalstop
+    ; Handle line for Optional Stop G/M code 
+    iStopmode = 1
+    {nb, iStopmode:mcode_f,nl}
+endp 
+
+@usr_open_close_file (string do,integer id)
+    if do eq 'open'
+        blknum = save_blocknum<<id>>
+	    {nl,'!!open file='sChFilePath<<id>>'!!'} 
+	elseif do eq 'close'
+	    {nl,'!!close file='sChFilePath<<id>>'!!'}
+	    
+	    save_blocknum<<id>> = blknum
+	endif
+endp
+
+
+
+@usr_campart_path
+    local integer iSlength_g_file_name iSlength_full_g_file_name iSlengthcampartpath
+    ; Uses String Functions to get the Windows Folder Path to the CAM-Part
+    iSlength_g_file_name = strlen( g_file_name)
+    iSlength_full_g_file_name = strlen(full_g_file_name)
+    iSlengthcampartpath = iSlength_full_g_file_name - iSlength_g_file_name
+    sCamfilepath = left(full_g_file_name,iSlengthcampartpath)
+endp
+
+
+
+@usr_sof_character
+    ; Handle start of file character
+    
+    {cPb}
+    
+endp
+
+@usr_sof_progname
+    ; Handle Program Number and/or Name    
+    if iSplit_ProgName_Num and bUseprognum and bUseprogname
+        if iSplit_ProgName_Num == 1
+            {nl, cCb, part_name,cCe} 
+            {nl, cPn, program_number}
+        else
+            {nl, cPn, program_number}                
+            {nl, cCb, part_name,cCe} 
+        endif
+    else
+        if bUseprognum
+            {nl, cPn,program_number}
+            if bUseprogname
+                {' 'cCb, part_name,cCe}
+            endif
+        else
+            if bUseprogname
+                {nl, cCb, part_name,cCe}
+            endif
+        endif    
+    endif
+    if bUseFileName
+        {nl, cCb, g_file_name,cCe}
+    endif    
+    
+endp
+
+@usr_spindle_selection
+    ; SET: Select "Active Spindle" for Main/Sub
+    ; Lets machine know which spindle is being worked on (i.e. for CSS)
+	if spindle eq 0
+		nActiveSpindle = nMainSpindleCode
+	elseif spindle eq 1
+		nActiveSpindle = nSubSpindleCode
+	endif
+endp
+
+@usr_spindle_selection_output
+    ; OUTPUT: Select "Active Spindle" for Main/Sub
+	if change(nActiveSpindle)
+        {nb,[nActiveSpindle]}
+    endif
+endp
+
+@usr_millturn_mode
+    ; SET: Sets "Milling or Turning" mode
+    ; Typically there are separate G/M codes for each mode on each spindle
+    if iJobType eq 1
+		if spindle eq 0
+			nMillturnmode = nMainTurnCode			
+		elseif spindle eq 1
+			nMillturnmode = nSubTurnCode			
+		endif
+	elseif iJobType eq 0
+		if spindle eq 0
+			nMillturnmode = nMainMillCode
+		elseif spindle eq 1		
+			nMillturnmode = nSubMillCode
+		endif
+	endif 
+endp
+
+@usr_millturn_mode_output
+    ; OUTPUT: Sets "Milling or Turning" mode
+	if change(nMillturnmode)
+	    if nMillturnmode eq nMainMillCode
+			{nb,'G98'}
+		endif
+        {nb,[nMillturnmode]}
+    endif    
+endp
+
+@usr_clamp_unclamp_spindle
+    ; SET: Sets "Clamp/Unclamp of Spindle"
+    ; iSpindleClamp is used for forcing CLAMP or UNCLAMP (i.e. Drill 4x Cycles) (0 = ignore, 1 = clamp, 2 = unclamp, 3 = no output)
+    if iJobType eq 0
+        if (change(nPos<<4>>) or (rot_axis_type ne axis4_none or X5_job or iSpindleClamp eq 1)) and (iSpindleClamp ne 2)            
+    		if spindle eq 0
+    			nSpindleClampMode = nMainUnclampCode
+    		elseif spindle eq 1
+    			nSpindleClampMode = nSubUnclampCode
+    		endif            
+        else
+            if iSpindleClamp eq 0 or iSpindleClamp eq 2
+        		if spindle eq 0
+        			nSpindleClampMode = nMainClampCode
+        		elseif spindle eq 1
+        			nSpindleClampMode = nSubClampCode
+        		endif
+    	    endif        
+        endif
+    else
+        ; We set to Unclamp for turning, but never output
+		if spindle eq 0
+			nSpindleClampMode = nMainUnclampCode
+		elseif spindle eq 1
+			nSpindleClampMode = nSubUnclampCode
+		endif
+		change(nSpindleClampMode) = false
+	endif
+	
+    if (change(nPos<<5>>) or (rot_axis_type ne axis4_none or X5_job or iSpindleClamp eq 1)) and (iSpindleClamp ne 2)
+        nR2ClampMode = nR2UnclampCode
+    else
+        nR2ClampMode = nR2ClampCode
+    endif
+	
+	
+
+	if change(nSpindleClampMode)
+        {nb, nSpindleClampMode}
+    endif
+    
+    if change(nR2ClampMode) and b2ndRotary<<submachine_ID>> 
+        {nb,[nR2ClampMode]}
+    endif
+    
+    
+    
+    
+endp
+
+
+@usr_spindledir_spinformat_mode(integer id, integer iSpindle, logical bSpindleONOFF,string jobtype, logical output)
+    local integer dir
+    if bSpindleONOFF
+        if !bMco
+            if spin_direction eq CW 
+                dir = 1
+            elseif spin_direction eq CCW 
+                dir = 2
+            endif
+        elseif bMco
+            if spin_direction eq 1 
+                dir = 1
+            elseif spin_direction eq 2 
+                dir = 2
+            endif
+        endif
+        if iJobType eq 1       
+            if iSpindle eq 0
+		
+                nSpindleDir = nMainDircode<<dir>>
+                nSpin_f = sSpinTurn<<1>>
+                nSpindleDir_f = sSpindleDir<<1>>                                          
+            elseif iSpindle eq 1
+                nSpindleDir = nSubDircode<<dir>>
+                nSpin_f = sSpinTurn<<2>> 
+                nSpindleDir_f = sSpindleDir<<2>>           
+            endif       
+        elseif iJobType eq 0       
+            nSpindleDir = nLiveDircode<<id,dir>> 
+            nSpin_f = sSpinLive<<id>> 
+            nSpindleDir_f = sSpindleDir<<3>>       
+        endif
+    else
+        dir = 3
+        if jobtype eq ''
+            if iJobType eq 1 
+                jobtype = 'turning'
+            elseif iJobType eq 0
+                jobtype = 'milling' 
+            endif                     
+        endif
+        if jobtype eq 'turning'       
+            if iSpindle eq 0
+                nSpindleDir = nMainDircode<<dir>>
+                nSpin_f = sSpinTurn<<1>>                         
+            elseif iSpindle eq 1
+                nSpindleDir = nSubDircode<<dir>>
+                nSpin_f = sSpinTurn<<2>>           
+            endif       
+        elseif jobtype eq 'milling'       
+            nSpindleDir = nLiveDircode<<id,dir>> 
+            nSpin_f = sSpinLive<<id>>       
+        endif       
+    endif
+    if output
+        if change(nSpindleDir)
+            {nb,[nSpindleDir]}
+        endif
+    endif
+endp
+ 
+@usr_arc_plane (logical bRadius)  
+    
+    if bRadius
+        change (nPosArc<<1>>) = false
+        change (nPosArc<<2>>) = false
+        change (nPosArc<<3>>) = false 
+        change (nPosArc<<4>>) = true
+    else     
+        if arc_plane eq XY then
+            change (nPosArc<<1>>) = true
+            change (nPosArc<<2>>) = true
+            change (nPosArc<<3>>) = false 
+            change (nPosArc<<4>>) = false         
+        elseif arc_plane eq ZX then
+            change (nPosArc<<1>>) = true
+            change (nPosArc<<2>>) = false
+            change (nPosArc<<3>>) = true 
+            change (nPosArc<<4>>) = false
+        elseif arc_plane eq YZ then
+            change (nPosArc<<1>>) = false
+            change (nPosArc<<2>>) = true
+            change (nPosArc<<3>>) = true
+            change (nPosArc<<4>>) = false
+        endif
+    endif   
+
+ 
+endp
+
+@usr_control_pos_set (string sOutType)
+   local integer iPosSet
+   local numeric xtemp ytemp ztemp xcntrtmp ycntrtmp zcntrtmp xcntrtmp_rel ycntrtmp_rel zcntrtmp_rel
+   local logical bRadiusOutput
+   
+   if (sOutType eq 'rapid' or sOutType eq 'line' or sOutType eq 'arc') and !bMco
+       if x5_job and instr(job_type,'drill') eq 0        
+            iPosSet = i5xPosSet<<submachine_ID>>
+        elseif iJobType eq 1
+            iPosSet = iTurnPosSet<<submachine_ID>>      
+        elseif bCartesian            
+            iPosSet = iCartPosSet<<submachine_ID>>
+        else       
+            iPosSet = i3xPosSet<<submachine_ID>>
+        endif
+    
+        if iPosSet eq 0
+            xtemp = xpos
+            ytemp = ypos
+            ztemp = zpos
+            xcntrtmp = xcenter
+            ycntrtmp = ycenter
+            zcntrtmp = zcenter
+            xcntrtmp_rel = xcenter_rel
+            ycntrtmp_rel = ycenter_rel
+            zcntrtmp_rel = zcenter_rel
+        elseif iPosSet eq 1
+            xtemp = xhpos
+            ytemp = yhpos
+            ztemp = zhpos
+            xcntrtmp = xhcenter
+            ycntrtmp = yhcenter
+            zcntrtmp = zhcenter
+            xcntrtmp_rel = xhcenter_rel
+            ycntrtmp_rel = yhcenter_rel
+            zcntrtmp_rel = zhcenter_rel
+        elseif iPosSet eq 2
+            xtemp = xmpos
+            ytemp = ympos
+            ztemp = zmpos
+            xcntrtmp = xmcenter
+            ycntrtmp = ymcenter
+            zcntrtmp = zmcenter
+            xcntrtmp_rel = xmcenter_rel
+            ycntrtmp_rel = ymcenter_rel
+            zcntrtmp_rel = zmcenter_rel
+        elseif iPosSet eq 3
+            xtemp = xopos
+            ytemp = yopos
+            ztemp = zopos
+            xcntrtmp = xocenter
+            ycntrtmp = yocenter
+            zcntrtmp = zocenter
+            xcntrtmp_rel = xocenter_rel
+            ycntrtmp_rel = yocenter_rel
+            zcntrtmp_rel = zocenter_rel
+        elseif iPosSet eq 4
+            xtemp = xlpos
+            ytemp = ylpos
+            ztemp = zlpos
+            xcntrtmp = xlcenter
+            ycntrtmp = ylcenter
+            zcntrtmp = zlcenter
+            xcntrtmp_rel = xlcenter_rel
+            ycntrtmp_rel = ylcenter_rel
+            zcntrtmp_rel = zlcenter_rel
+        elseif iPosSet eq 5
+            xtemp = xtpos
+            ytemp = ytpos
+            ztemp = ztpos
+            xcntrtmp = xtcenter
+            ycntrtmp = ytcenter
+            zcntrtmp = ztcenter
+            xcntrtmp_rel = xtcenter_rel
+            ycntrtmp_rel = ytcenter_rel
+            zcntrtmp_rel = ztcenter_rel
+        elseif iPosSet eq 6
+            xtemp = xtopos
+            ytemp = ytopos
+            ztemp = ztopos
+            xcntrtmp = xtocenter
+            ycntrtmp = ytocenter
+            zcntrtmp = ztocenter
+            xcntrtmp_rel = xtcenter_rel
+            ycntrtmp_rel = ytcenter_rel
+            zcntrtmp_rel = ztcenter_rel          
+        elseif iPosSet eq 7
+            xtemp = xrpos
+            ytemp = yrpos
+            ztemp = zrpos
+            xcntrtmp = xrcenter
+            ycntrtmp = yrcenter
+            zcntrtmp = zrcenter
+            xcntrtmp_rel = xtcenter_rel
+            ycntrtmp_rel = ytcenter_rel
+            zcntrtmp_rel = ztcenter_rel      
+        elseif iPosSet ge 8
+            xtemp = xrtpos
+            ytemp = yrtpos
+            ztemp = zrtpos
+            xcntrtmp = xrtcenter
+            ycntrtmp = yrtcenter
+            zcntrtmp = zrtcenter
+            xcntrtmp_rel = xtcenter_rel
+            ycntrtmp_rel = ytcenter_rel
+            zcntrtmp_rel = ztcenter_rel
+        endif 
+               
+        ;set postion output      
+        nPos<<1>> = xtemp
+        nPos<<2>> = ytemp
+        nPos<<3>> = ztemp
+        
+        if (!bYaxisExist<<submachine_ID>> or (iJobType eq 1 and !bYaxisTurning<<submachine_ID>>)) and !bCartesian
+            change(nPos<<2>>) = false
+        endif 
+        
+    elseif bMco
+        
+        if MCO_CoordSysType eq 2           
+            iPosSet = iMcoPartPosSet                    
+            if iPosSet eq 1
+                xtemp = xh_move
+                ytemp = yh_move
+                ztemp = zh_move           
+            elseif iPosSet eq 2
+                xtemp = xm_move
+                ytemp = ym_move
+                ztemp = zm_move           
+            elseif iPosSet eq 5
+                xtemp = xt_move
+                ytemp = yt_move
+                ztemp = zt_move           
+            elseif iPosSet eq 7
+                xtemp = xr_move
+                ytemp = yr_move
+                ztemp = zr_move 
+            elseif iPosSet ge 8
+                xtemp = xrt_move
+                ytemp = yrt_move
+                ztemp = zrt_move
+            endif 
+        elseif MCO_CoordSysType eq 1
+            xtemp = move_axis_x
+            ytemp = move_axis_y
+            ztemp = move_axis_z
+        endif
+
+        ;set postion output
+        if userDef_x      
+            nPos<<1>> = xtemp
+        endif
+        if userDef_y
+            nPos<<2>> = ytemp
+        endif
+        if userDef_z
+            nPos<<3>> = ztemp
+        endif
+        
+        if !bYaxisExist<<submachine_ID>> or ((iJobType eq 1 and !bYaxisTurning<<submachine_ID>>) and !bMco) 
+            change(nPos<<2>>) = false
+        endif     
+    endif
+    
+    
+        
+    ;set arc output
+    if sOutType eq 'arc'   
+        if iJobType eq 1
+            if iTurnArcmode eq 1 or (arc_size eq 360 and iTurnArcmode eq 3)
+                nPosArc<<1>> = xcntrtmp
+                nPosArc<<2>> = ycntrtmp
+                nPosArc<<3>> = zcntrtmp
+                change (nPosArc<<4>>) = false
+                bRadiusOutput = false
+            elseif iTurnArcmode eq 2 or (arc_size eq 360 and iTurnArcmode eq 4)
+                nPosArc<<1>> = xcntrtmp_rel
+                nPosArc<<2>> = ycntrtmp_rel
+                nPosArc<<3>> = zcntrtmp_rel
+                change (nPosArc<<4>>) = false
+                bRadiusOutput = false
+            elseif (iTurnArcmode eq 3 or iTurnArcmode eq 4) and arc_size ne 360
+                if arc_size >= 180 then
+                    nPosArc<<4>> = -radius
+                else
+                    nPosArc<<4>> = radius
+                endif
+                bRadiusOutput = true                               
+            endif
+        else
+            if iArcmode eq 1 or (arc_size eq 360 and iArcmode eq 3)
+                nPosArc<<1>> = xcntrtmp
+                nPosArc<<2>> = ycntrtmp
+                nPosArc<<3>> = zcntrtmp
+                bRadiusOutput = false
+            elseif iArcmode eq 2 or (arc_size eq 360 and iArcmode eq 4)
+                nPosArc<<1>> = xcntrtmp_rel
+                nPosArc<<2>> = ycntrtmp_rel
+                nPosArc<<3>> = zcntrtmp_rel
+                bRadiusOutput = false
+            elseif (iArcmode eq 3 or iArcmode eq 4) and arc_size ne 360
+                if arc_size >= 180 then
+                    nPosArc<<4>> = -radius
+                else
+                    nPosArc<<4>> = radius
+                endif
+                bRadiusOutput = true      
+            endif        
+        endif
+        call @usr_arc_plane ((bRadiusOutput))
+    endif
+    
+    
+    
+endp
+
+@usr_axis_assignments
+    ;set axis format based on sub machine
+    local string x y z a b
+    if bMco
+        x = '<' + left(name_axis_x,1) + '>' + xMCO_F
+        y = '<' + left(name_axis_y,1) + '>' + yMCO_F
+        z = '<' + left(name_axis_z,1) + '>' + zMCO_F
+        a = '<' + left(name_axis_a,1) + '>' + r1MCO_f
+        b = '<' + left(name_axis_b,1) + '>' + r2MCO_f
+        nPos_f<<1>> = x
+        nPos_f<<2>> = y
+        nPos_f<<3>> = z 
+        nPos_f<<4>> = a
+        nPos_f<<5>> = b 
+    elseif iJobType eq 1
+        nPos_f<<1>> = xTurnSubmachine<<submachine_ID>>
+        nPos_f<<2>> = yTurnSubmachine<<submachine_ID>>
+        nPos_f<<3>> = zTurnSubmachine<<submachine_ID>>
+        nPos_f<<4>> = r1Submachine<<submachine_ID>>
+        nPos_f<<5>> = r2Submachine<<submachine_ID>>       
+        break
+    elseif iJobType eq 0        
+        if bCartesian
+            nPos_f<<1>> = XMillCart<<submachine_ID>> 
+            nPos_f<<2>> = yMillCart<<submachine_ID>>
+        else
+            nPos_f<<1>> = xMillSubmachine<<submachine_ID>> 
+            nPos_f<<2>> = yMillSubmachine<<submachine_ID>>
+        endif
+        nPos_f<<3>> = zMillSubmachine<<submachine_ID>>
+        nPos_f<<4>> = r1Submachine<<submachine_ID>>
+        nPos_f<<5>> = r2Submachine<<submachine_ID>> 
+        break
+    endif  
+endp
+
+@usr_rpos_calc
+    local numeric nR1postemp nR2postemp nPR1postemp nPR2postemp
+    if X5_job or instr(job_type,'mw_drill') ne 0 or rot_axis_type ne axis4_none         
+        nR1postemp = apos               ;Rotary from 4/5x Simulatenous
+        nR2postemp = bpos               ;Rotary from 4/5x Simulatenous
+    else
+        nR1postemp = anext              ;Rotary from 4/5x Start of Job
+        nR2postemp = bnext              ;Rotary from 4/5x Start of Job
+    endif
+
+    if bMco
+        if userDef_a
+            nPos<<4>> = move_axis_a
+        endif
+        if userDef_b
+            nPos<<5>> = move_axis_b
+        endif 
+    elseif rot_axis_coord eq axis4_cartesian and rot_axis_type ne axis4_none 
+         nPos<<4>> = 0
+    elseif iRposControl<<submachine_ID>> eq 0
+        nPos<<4>> = nR1postemp
+        nPos<<5>> = nR2postemp
+    elseif iRposControl<<submachine_ID>> eq 1
+        nPos<<4>> = norm360(nR1postemp)
+        nPos<<5>> = norm360(nR2postemp)
+    elseif iRposControl<<submachine_ID>> eq 2
+        nPos<<4>> = norm360(nR1postemp) * -1
+        nPos<<5>> = norm360(nR2postemp) * -1
+    elseif iRposControl<<submachine_ID>> eq 3
+        nPos<<4>> = norm360(nR1postemp)
+        nPos<<4>> = norm360(nR2postemp)
+        if nR1postemp < nPR1postemp
+            nPos<<4>> = norm360(nR1postemp) * -1
+        endif
+        if nR2postemp < nPR2postemp
+            nPos<<5>> = norm360(nR2postemp) * -1
+        endif
+        if norm360(nR1postemp) ne norm360(nPR1postemp)
+            change(nPos<<4>>) = TRUE
+        else
+            change(nPos<<4>>) = false
+        endif
+        if norm360(nR2postemp) ne norm360(nPR2postemp)
+            change(nPos<<5>>) = TRUE
+        else
+            change(nPos<<5>>) = false
+        endif
+    endif    
+    
+    if iRposControl<<submachine_ID>> eq -1
+        change(nPos<<4>>) = false
+        change(nPos<<5>>) = false  
+    else
+        if ((!b1stRotary<<submachine_ID>> or iJobType eq 1) and !bMco) or bCartesian
+            change(nPos<<4>>) = false
+        endif
+        if (!b2ndRotary<<submachine_ID>>) and !bMco
+            change(nPos<<5>>) = false
+        endif
+    endif
+    
+endp
+
+@usr_init_gmstates
+    ; Handle initializing G/M codes for correct modality from beginning of file
+    
+    iMotionmode             = 9999
+    iAbsincmode             = 9999
+    iDiametercomp           = 40
+    iDiameteroffset         = 9999
+    iMplane                 = 9999  
+    nSpindleClampMode       = 9999     
+    nPos<<1>>               = 9999
+    nPos<<2>>               = 9999
+    nPos<<3>>               = 9999
+    nPos<<4>>               = 9999
+    nPos<<5>>               = 9999
+    nSpeedType              = 9999
+    
+    sync_status_s           = 2
+
+    
+    ; Handle initail state of parameters
+    bFirstTC<<1>>       = true
+    bFirstTC<<2>>       = true
+    bFirstTC<<3>>       = true
+    bFirstTC<<4>>       = true
+    bManualTC           = false
+    save_blocknum<<1>>  = blknum
+    save_blocknum<<2>>  = blknum
+    save_blocknum<<3>>  = blknum
+    save_blocknum<<4>>  = blknum
+
+endp
+
+@usr_gmstates_tc
+    ; set modality for each channel first tool change
+    if bFirstTC<<ChannelID>>
+        change(nActiveSpindle)  = true
+        change(nMillturnmode)   = true
+        change(iMplane)         = true   
+        nSpindleClampMode       = 9999   
+        nSpinLimit              = -1
+        nSpindleClampMode       = 9999
+ 
+    endif
+    
+    ; set modality for every tool change
+    if spindle eq 0
+        nPos<<1>> = 9999
+        nPos<<2>> = 9999
+        nPos<<3>> = 9999
+        nPos<<4>> = 9999
+        nPos<<5>> = 9999
+        nPrevPos<<1>> = 9999
+        nPrevPos<<2>> = 9999
+        nPrevPos<<3>> = 9999
+        nPrevPos<<4>> = 9999
+        nPrevPos<<5>> = 9999
+    elseif spindle eq 1
+        nPos<<1>> = 9999
+        nPos<<2>> = 9999
+        nPos<<3>> = -9999
+        nPos<<4>> = 9999
+        nPos<<5>> = 9999      
+        nPrevPos<<1>> = 9999
+        nPrevPos<<2>> = 9999
+        nPrevPos<<3>> = -9999
+        nPrevPos<<4>> = 9999
+        nPrevPos<<5>> = 9999
+    endif
+    
+    nSpin = 0             
+    iMotionmode = 9999
+    nSpindleDir = 9999
+    if bOutputABSINC
+        change(iAbsincmode) = true
+    else
+        change(iAbsincmode) = false
+    endif
+    change(iDiameteroffset) = false
+    
+endp
+
+@def_tool
+    ; Handle GPP direct call to to sync @def_tool and @def_turn_tool                                    
+    call @usr_def_tool
+endp
+
+@def_turn_tool 
+    ; Handle GPP direct call to to sync @def_tool and @def_turn_tool                                    
+    call @usr_def_tool
+endp
+
+@usr_def_tool
+    
+    	Local string sToolType
+  
+
+    if bOutputToolList
+            if ChannelID eq 0
+                ChannelID = 1
+            endif
+            if bSimpleOffsets
+                ;{nb, cCb,tool_position_in_turret,tool_number,cCe} 
+                {nl,tool_number:'<( * TOOL >8.0(p)< >'tool_position_in_turret:'<STATION >z2.0(p)< >'}
+                {tool_number:'<OFFSET >z2.0(p)< * >'}    
+            else 
+                {nl,tool_number:'<( * TOOL >8.0(p)< >'tool_position_in_turret:'<STATION >z2.0(p)< >'}
+                {(tool_position_in_turret+(tool_position-1)*iNumberStations<<ChannelID>>):'<OFFSET >z2.0(p)< * >'}
+            endif
+            if tool_message ne ''
+                {upper(tool_message)' '}
+            endif
+            
+            {')'}
+
+			If msg_mill_tool1 ne ''
+				{nl,cCb msg_mill_tool1,cCe}
+			Endif
+			If msg_turn_tool1 ne ''
+				{nl,cCb msg_turn_tool1,cCe}
+			Endif
+
+			If msg_mill_tool2 ne ''
+				{nl,cCb msg_mill_tool2,cCe}
+			Endif
+			If msg_turn_tool2 ne ''
+				{nl,cCb msg_turn_tool2,cCe}
+			Endif
+
+			If msg_mill_tool3 ne ''
+				{nl,cCb msg_mill_tool3,cCe}
+			Endif
+			If msg_turn_tool3 ne ''
+				{nl,cCb msg_turn_tool3,cCe}
+			Endif
+
+			If msg_mill_tool4 ne ''
+				{nl,cCb msg_mill_tool4,cCe}
+			Endif
+			If msg_turn_tool4 ne ''
+				{nl,cCb msg_turn_tool4,cCe}
+			Endif
+
+			If msg_mill_tool5 ne ''
+				{nl,cCb msg_mill_tool5,cCe}
+			Endif
+			If msg_turn_tool5 ne ''
+				{nl,cCb msg_turn_tool5,cCe}
+			Endif
+			
+		
+
+
+	msg_mill_tool1 = ''
+	msg_turn_tool1 = ''
+	msg_mill_tool2 = ''
+	msg_turn_tool2 = ''
+	msg_mill_tool3 = ''
+	msg_turn_tool3 = ''
+	msg_mill_tool4 = ''
+	msg_turn_tool4 = ''
+	msg_mill_tool5 = ''
+	msg_turn_tool5 = ''
+
+    endif
+    if next_command ne '@def_tool' and next_command ne '@def_turn_tool' and bTlchg eq false
+        if bTlseperation and bOutputToolList
+            local integer i ii
+            i = 0
+            if iNumSeparationLines == 0
+                ii = 1
+            else
+                ii = iNumSeparationLines
+            endif
+            while i < ii
+                {nl}
+                i = i + 1
+            endw
+        endif
+    endif
+    
+    
+    
+endp
+
+
+
+@relative_mode
+    ; Handle setting of IncrementalMode Gcode
+    
+    iAbsincmode = 91
+    if !bOutputABSINC
+        change(iAbsincmode) = false
+    endif
+    
+endp
+
+@absolute_mode
+    ; Handle setting of AbsoluteMode Gcode 
+        
+    iAbsincmode = 90
+    if !bOutputABSINC
+        change(iAbsincmode) = false
+    endif
+ 
+endp
+
+@machine_plane
+    ; Handle setting of MachinePlane Gcode   
+    if iJobType eq 1 
+        iMplane = 18 
+        iSpindleAxis = 3
+    elseif bSolidCamArcPlane
+        if machine_plane eq XY
+            iMplane = 17
+            iSpindleAxis = 3
+        endif
+        if machine_plane eq ZX
+            iMplane = 18
+            iSpindleAxis = 2        
+        endif
+        if machine_plane eq YZ
+            iMplane = 19
+            iSpindleAxis = 1
+        endif
+    else
+        if iJobType eq 0
+            if abs(mounting_direction_z) eq 1 or rot_axis_type eq axis4_face 
+                iMplane = 17
+                iSpindleAxis = 3
+            elseif abs(mounting_direction_y) eq 1
+                iMplane = 18
+                iSpindleAxis = 2
+            elseif abs(mounting_direction_x) eq 1
+                iMplane = 19
+                iSpindleAxis = 1          
+            endif
+        else ;MCO
+            iSpindleAxis = 3                   
+        endif
+    endif
+
+endp
+
+@home_number
+    ; Handle setting WorkOffset Gcode
+
+    
+ 
+endp
+
+@usr_home_number
+    ; Handle setting WorkOffset Gcode
+
+    if iWorkOffset_Method eq 0
+        if iWorkOffsetmode eq 1
+            if home_number <= 6
+                nWorkoffset = 53 + mac_number
+            else
+                nWorkoffset = 103 + mac_number
+            endif
+        elseif iWorkOffsetmode eq 2 or iWorkOffsetmode eq 3
+            nWorkoffset = mac_number
+        endif
+    else
+        nWorkoffset = tonum(home_user_name)
+    endif
+    
+    if bMco and MCO_CoordSysType eq 1
+       nWorkoffset = nHomeOffset          
+    endif
+    
+    if  iWorkOffsetmode eq 0
+        change(nWorkOffset) = false
+    endif
+    
+
+    
+endp
+
+@change_tool
+    bTlchg = true    
+    if bMco ;mco tc
+        call @start_of_job    
+    endif
+endp
+
+@turn_change_tool
+    bTlchg = true     
+    if bMco ;mco tc
+        call @start_of_job    
+    endif  
+endp
+
+@rapid_move
+    ; Handle GPP direct call to Rapid Move (G00)
+    ; We not use this procedure to output code
+    ; We create our own procedure for this so that we may...
+    ;   Sync with @rapid_move, @move_5x, @move_4x, @move4x_polar, @move4x_cartesian
+    call @usr_rapid
+endp
+
+@move_5x
+    ; Handle GPP direct call to Rapid Move (G00)
+    ; We not use this procedure to output code
+    ; We create our own procedure for this so that we may...
+    ;   Sync with @rapid_move, @move_5x, @move_4x, @move4x_polar, @move4x_cartesian
+    call @usr_rapid
+endp    
+
+
+@usr_Set_nPrevPos 
+       
+   nPrevPos<<1>> = nPos<<1>>
+   nPrevPos<<2>> = nPos<<2>>
+   nPrevPos<<3>> = nPos<<3>> 
+   nPrevPos<<4>> = nPos<<4>> 
+   nPrevPos<<5>> = nPos<<5>>
+    
+endp
+
+@line
+    ; Handle GPP direct call to Line Movement (G01)
+    ; We not use this procedure to output code
+    ; We create our own procedure for this so that we may...
+    ;   Sync with @line, @line_5x, @line_4x, @line4x_polar, @line4x_cartesian
+    call @usr_line
+endp
+
+@line_5x
+    ; Handle GPP direct call to Line Movement (G01)
+    ; We not use this procedure to output code
+    ; We create our own procedure for this so that we may...
+    ;   Sync with @line, @line_5x, @line_4x, @line4x_polar, @line4x_cartesian
+    call @usr_line
+endp
+
+@arc
+    ; SolidCAM call to normal arc movement
+    ; We do not use this procedure to output code
+    ; We create our own procedure for this so that we have one arc formatting section
+    call @usr_arc
+endp
+
+@arc_5x
+    ; SolidCAM call to normal arc movement
+    ; We do not use this procedure to output code
+    ; We create our own procedure for this so that we have one arc formatting section
+    call @usr_arc
+endp
+
+@compensation
+    ; Handle setting of Diameter Compensation Gcode 
+    
+    if side eq COMP_LEFT then
+        iDiametercomp = 41
+        if bDiameterCompOutputD
+            change(iDiameteroffset) = true
+        else
+            change(iDiameteroffset) = false
+        endif
+    endif
+    if side eq COMP_RIGHT then
+        iDiametercomp = 42
+        if bDiameterCompOutputD
+            change(iDiameteroffset) = true
+        else
+            change(iDiameteroffset) = false
+        endif
+    endif
+    if side eq COMP_OFF then
+        iDiametercomp = 40
+        change(iDiameteroffset) = false
+    endif
+
+endp
+
+@change_ref_point
+    ; @change_ref_point Not Supported in this template
+    
+endp
+
+@rotate
+    ; @rotate Not Supported in this template
+endp
+
+@mirror
+    ; @mirror Not Supported in this template
+endp
+
+@fourth_axis
+    ; @fourth_axis Not Supported in this template
+endp
+
+@message
+    ; We don't always use messages directly from SolidCAM
+    if iOperationMessage eq 1
+        {nb, cCb,message,cCe}
+    endif
+endp
+
+@m_feed_spin
+    ; Handle GPP direct call to "Milling feed spin"
+    ; We create our own procedure for this so that we may Sync "Milling and Turning"
+    ;call @usr_feed_spin
+    call @usr_feed_spin
+endp
+
+@feed_spin
+    ; Handle GPP direct call to "Turning feed spin"
+    ; We create our own procedure for this so that we may Sync "Milling and Turning"
+    ;call @usr_feed_spin
+    call @usr_feed_spin
+endp    
+
+@usr_feed_spin
+    local logical FeedPerRev 
+    local integer i j
+    ;1. Set CSS Limit (if Turning) AND SET GEAR RANGE MAIN/SUB SPINDLE
+	if iJobType eq 1	    
+	    if spindle eq 0
+	        nGear =  nMainGear<<drive_unit_gear_ID>> 
+	    else
+	        nGear =  nSubGear<<drive_unit_gear_ID>>
+	    endif
+	else
+	    if bUseSpindleGearsMilling
+	        nGear =  nMillGear<<drive_unit_gear_ID>>
+	    else	        
+	        change(nGear) = false 	
+	    endif
+	endif
+
+	;2a. Set SpeedType, FeedType, SpindleDir
+    call @usr_spindledir_spinformat_mode ((submachine_id),(spindle),(true),(''),(false))
+    if spin_unit eq css
+		nSpinType = nCssOnCode
+		nSpinLimit = spin_limit
+	endif
+	if spin_unit eq rpm
+		nSpinType = nCssOffCode
+	endif
+	
+	nSpin = spin
+	
+	if bTapFeedPerRev 
+	    if iJobType eq 1
+	        if tool_type eq Turn_DRILLING and tool_drill_lead ne 0 
+	            FeedPerRev = true
+	        endif
+	    elseif tool_type eq tap_mill	   
+	        FeedPerRev = true
+	    else
+	        FeedPerRev = false
+	    endif
+	endif
+	
+    if iJobType eq 1
+    	if feed_unit eq mm_min and !FeedPerRev
+    		nFeedType = nFeedPerMinCode
+    	endif	
+    	if feed_unit eq mm_rev or FeedPerRev
+    		nFeedType = nFeedPerRevCode
+    	endif
+    else
+    	if (rot_axis_type ne axis4_none or X5_job) and iRotaryFeedType eq 4
+            nFeedType = nFeedInverseTimeCode
+        elseif FeedPerRev 
+            nFeedType = nFeedPerRevCode
+        else
+            nFeedType = nFeedPerMinCode
+        endif
+    endif
+    
+  change(nFeedType) = true
+endp  
+        
+@usr_setfeed
+       
+    ; Set correct output feed for each cutting mode
+   	if rot_axis_type ne axis4_none or X5_job
+   	    ;1. Multax cutting
+   	    if iRotaryFeedType eq 1
+			nFeed = feed ;!@#$%AC I think feed is output as deg/min now????
+   	    endif 
+   	    if iRotaryFeedType eq 2
+	        nFeed = original_feed * (abs(xopos*2) / n4xFeedDia)
+	    endif
+   	    if iRotaryFeedType eq 3
+	        nFeed = original_feed
+	    endif
+   	    if iRotaryFeedType eq 4
+	        nFeed = inverse_feed
+	        change(nFeed) = true
+	    endif
+	else
+	    nFeed = feed
+	endif
+	if bMco
+	    nFeed = feed_move
+	endif
+    
+endp
+
+@usr_coolant
+    ; Handle setting of coolant variable
+    if flood_coolant eq 1
+        iCoolantM<<1>> = iCoolantON<<1>>
+    elseif flood_coolant eq 0 or flood_coolant eq 2
+        iCoolantM<<1>> = iCoolantOFF<<1>>
+    endif
+        
+    if HP_flood_coolant eq 1
+        iCoolantM<<2>> = iCoolantON<<2>>
+    elseif HP_flood_coolant eq 0 or HP_flood_coolant eq 2
+        iCoolantM<<2>> = iCoolantOFF<<2>>
+    endif
+    
+    if LP_flood_coolant eq 1
+        iCoolantM<<3>> = iCoolantON<<3>>
+    elseif LP_flood_coolant eq 0 or LP_flood_coolant eq 2
+        iCoolantM<<3>> = iCoolantOFF<<3>>
+    endif
+    
+    if flood_ival_coolant eq 1
+        iCoolantM<<4>> = iCoolantON<<4>>
+        flood_coolant_val = 0
+    elseif flood_ival_coolant eq 0 or flood_ival_coolant eq 2
+        iCoolantM<<4>> = iCoolantOFF<<4>>
+    endif
+    
+    if mist_coolant eq 1
+        iCoolantM<<5>> = iCoolantON<<5>>
+    elseif mist_coolant eq 0 or mist_coolant eq 2
+        iCoolantM<<5>> = iCoolantOFF<<5>>
+    endif
+    
+    if HP_mist_coolant eq 1
+        iCoolantM<<6>> = iCoolantON<<6>>
+    elseif HP_mist_coolant eq 0 or HP_mist_coolant eq 2
+        iCoolantM<<6>> = iCoolantOFF<<6>>
+    endif
+    
+    if LP_mist_coolant eq 1
+        iCoolantM<<7>> = iCoolantON<<7>>
+    elseif LP_mist_coolant eq 0 or LP_mist_coolant eq 2
+        iCoolantM<<7>> = iCoolantOFF<<7>>
+    endif
+    
+    if mist_ival_coolant eq 1
+        iCoolantM<<8>> = iCoolantON<<8>>
+        mist_coolant_val = 0
+    elseif mist_ival_coolant eq 0 or mist_ival_coolant eq 2
+        iCoolantM<<8>> = iCoolantOFF<<8>>
+    endif
+    
+    if through_coolant eq 1
+        iCoolantM<<9>> = iCoolantON<<9>>
+    elseif through_coolant eq 0 or through_coolant eq 2
+        iCoolantM<<9>> = iCoolantOFF<<9>>
+    endif
+    
+    if HP_through_coolant eq 1
+        iCoolantM<<10>> = iCoolantON<<10>>
+    elseif HP_through_coolant eq 0 or HP_through_coolant eq 2
+        iCoolantM<<10>> = iCoolantOFF<<10>>
+    endif
+    
+    if LP_through_coolant eq 1
+        iCoolantM<<11>> = iCoolantON<<11>>
+    elseif LP_through_coolant eq 0 or LP_through_coolant eq 2
+        iCoolantM<<11>> = iCoolantOFF<<11>>
+    endif
+    
+    if through_ival_coolant eq 1
+        iCoolantM<<12>> = iCoolantON<<12>>
+        through_coolant_val = 0
+    elseif through_ival_coolant eq 0 or through_ival_coolant eq 2
+        iCoolantM<<12>> = iCoolantOFF<<12>>
+    endif
+    
+    if air_blast_coolant eq 1
+        iCoolantM<<13>> = iCoolantON<<13>>
+    elseif air_blast_coolant eq 0 or air_blast_coolant eq 2
+        iCoolantM<<13>> = iCoolantOFF<<13>>
+    endif
+    
+    if air_through_coolant eq 1
+        iCoolantM<<14>> = iCoolantON<<14>>
+    elseif air_through_coolant eq 0 or air_through_coolant eq 2
+        iCoolantM<<14>> = iCoolantOFF<<14>>
+    endif
+    
+    if minimum_quantity_L eq 1
+        iCoolantM<<15>> = iCoolantON<<15>>
+        minimum_quantity_L_val = 0
+    elseif minimum_quantity_L eq 0 or minimum_quantity_L eq 2
+        iCoolantM<<15>> = iCoolantOFF<<15>>
+    endif
+    
+    if mach_flood_coolant eq 1
+        iCoolantM<<16>> = iCoolantON<<16>>
+    elseif mach_flood_coolant eq 0 or mach_flood_coolant eq 2
+        iCoolantM<<16>> = iCoolantOFF<<16>>
+    endif
+    
+    if mach_HP_flood_coolant eq 1
+        iCoolantM<<17>> = iCoolantON<<17>>
+    elseif mach_HP_flood_coolant eq 0 or mach_HP_flood_coolant eq 2
+        iCoolantM<<17>> = iCoolantOFF<<17>>
+    endif
+    
+    if mach_LP_flood_coolant eq 1
+        iCoolantM<<18>> = iCoolantON<<18>>
+    elseif mach_LP_flood_coolant eq 0 or mach_LP_flood_coolant eq 2
+        iCoolantM<<18>> = iCoolantOFF<<18>>
+    endif
+    
+    if mach_flood_ival_coolant eq 1
+        iCoolantM<<19>> = iCoolantON<<19>>
+        mach_flood_coolant_val = 0
+    elseif mach_flood_ival_coolant eq 0 or mach_flood_ival_coolant eq 2
+        iCoolantM<<19>> = iCoolantOFF<<19>>
+    endif
+    
+    if mach_mist_coolant eq 1
+        iCoolantM<<20>> = iCoolantON<<20>>
+    elseif mach_mist_coolant eq 0 or mach_mist_coolant eq 2
+        iCoolantM<<20>> = iCoolantOFF<<20>>
+    endif
+    
+    if mach_HP_mist_coolant eq 1
+        iCoolantM<<21>> = iCoolantON<<21>>
+    elseif mach_HP_mist_coolant eq 0 or mach_HP_mist_coolant eq 2
+        iCoolantM<<21>> = iCoolantOFF<<21>>
+    endif
+    
+    if mach_LP_mist_coolant eq 1
+        iCoolantM<<22>> = iCoolantON<<22>>
+    elseif mach_LP_mist_coolant eq 0 or mach_LP_mist_coolant eq 2
+        iCoolantM<<22>> = iCoolantOFF<<22>>
+    endif
+    
+    if mach_mist_ival_coolant eq 1
+        iCoolantM<<23>> = iCoolantON<<23>>
+        mach_mist_coolant_val = 0
+    elseif mach_mist_ival_coolant eq 0 or mach_mist_ival_coolant eq 2
+        iCoolantM<<23>> = iCoolantOFF<<23>>
+    endif
+    
+    if mach_active_air_coolant eq 1
+        iCoolantM<<24>> = iCoolantON<<24>>
+    elseif mach_active_air_coolant eq 0 or mach_active_air_coolant eq 2
+        iCoolantM<<24>> = iCoolantOFF<<24>>
+    endif
+    
+    if mach_bed_rinsing_coolant eq 1
+        iCoolantM<<25>> = iCoolantON<<25>>
+    elseif mach_bed_rinsing_coolant eq 0 or mach_bed_rinsing_coolant eq 2
+        iCoolantM<<25>> = iCoolantOFF<<25>>
+    endif
+    
+endp
+@usr_coolant_off
+    local integer i
+    i = 1
+    while i le 25
+        iCoolantM<<i>> = iCoolantOFF<<i>> 
+        i = i + 1 
+    endw 
+endp
+
+@usr_coolant_reset  
+    local integer i
+    i = 2
+    while i le 25
+        change(iCoolantM<<i>>) = false  
+        i = i + 1 
+    endw 
+endp
+
+@usr_coolant_output
+    ; Handle output of coolant variable
+    local integer i e CoolCount<<1000>>
+    
+    i = 1 
+    while i le 25
+        ;{nb,'i= 'i}
+        if change(iCoolantM<<i>>)
+            e = iCoolantM<<i>>
+            CoolCount<<e>> = CoolCount<<e>> + 1
+            if CoolCount<<e>> eq 1
+                {nb,[iCoolantM<<i>>:mcode_f]}  
+            endif
+        endif
+        ;change(iCoolantM<<i>>) = false
+        i = i + 1
+    endw
+    
+   
+ 
+endp
+
+@usr_US_date
+    ; Converts Europe Date format to US format
+    Local Integer iInt1
+    iInt1 = instr(date,'-')
+    sUS_date = substr(date,(iInt1+1),3) + '-' + substr(date,1,(iInt1-1)) + '-' + right(date,4) 
+endp
+
+@usr_US_time
+    ; Converts Military time to 12hr format
+    Local Integer iInt1 iHr_Mil_int iHour
+    Local String iHr_Mil iTm_of_day
+    iInt1 = instr(time,':')
+    iHr_Mil = left(time,(iInt1-1))
+    iHr_Mil_int = tonum(iHr_Mil)
+    if iHr_Mil_int < 12
+        if iHr_Mil_int < 1
+            iHour = 12
+        else
+            iHour = iHr_Mil_int
+        endif
+        iTm_of_day = 'AM'
+    else
+        if iHr_Mil_int < 13
+            iHour = 12
+        else
+            iHour = iHr_Mil_int - 12
+        endif
+        iTm_of_day = 'PM'
+    endif
+    sUS_time = tostr(iHour:'5.0(p)') + substr(time,iInt1,8) + iTm_of_day
+endp
+
+@usr_prep_home_axis (string s)
+    ; Handle parsing of homing string and preping of output for homing
+    local integer i line l mode p1 xMode
+    local string  s1 s2 l1 pstr
+    if s eq '' 
+        return         
+    endif                     
+    s1 = s                                     ;Temp String
+    l = strlen(s1)                             ;Get string length of Temp String
+    s2 = substr(s1,1,1)                   ;*Check for 'x' in first character to flag separate iHomingmode for each line
+    if s2 eq 'x'
+        xMode = 1
+        s1 = substr(s1,2,l)                        ;Remove 'x' from Temp String
+        l = strlen(s1)                             ;Get string length of Temp String
+    else
+        xMode = 0
+    endif
+    if !xMode                                    ;*Pull out Homing mode (when not using xMode)
+        p1 = instr(s1,':')                         ;Find the position of first ":"
+        l1 = left(s1,p1-1)                         ;Pull out the left of first ":"
+        mode = tonum(l1)                           ;Convert string into Integer for "Mode" variable
+        s1 = substr(s1,p1+1,l)                     ;Remove Homing mode from Temp String
+        l = strlen(s1)                             ;Get string length of Temp String
+                                                 ;*Pull out Preperation String
+        p1 = instr(s1,':')                         ;Find the position of second ":"
+        if p1 ne 0                                 ;Check if PrepStr is defined
+            pstr = left(s1,p1-1)                   ;Pull out the left of second ":"
+            s1 = substr(s1,p1+1,l)                 ;Remove PrepString from Temp String
+            l = strlen(s1)                         ;Get string length of Temp String
+        endif
+    endif                                         ;*Pull out homing lines and send to output procedure
+    i = 1
+    while i < 50
+        i = i + 1
+        if xMode                                     ;*Pull out Homing mode (when using xMode)
+            p1 = instr(s1,':')                         ;Find the position of first ":"
+            l1 = left(s1,p1-1)                         ;Pull out the left of first ":"
+            mode = tonum(l1)                           ;Convert string into Integer for "Mode" variable
+            s1 = substr(s1,p1+1,l)                     ;Remove Homing mode from Temp String
+            l = strlen(s1)                             ;Get string length of Temp String
+                                                     ;*Pull out Preperation String
+            p1 = instr(s1,':')                         ;Find the position of second ":"
+            if p1 ne 0                                 ;Check if PrepStr is defined
+                pstr = left(s1,p1-1)                   ;Pull out the left of second ":"
+                s1 = substr(s1,p1+1,l)                 ;Remove PrepString from Temp String
+                l = strlen(s1)                         ;Get string length of Temp String
+            endif
+        endif
+        p1 = instr(s1,';')                      ;Find the position of ";"
+        if p1 ne 0
+            line = line + 1                     ;Keep track of lines. Not Used!!
+            l1 = left(s1,p1-1)                  ;Pull out the left of ";"
+            iHomingmode = mode                  ;Send Homing Mode
+            cHomep = pstr                       ;Send Preperation String
+            sHomeline = l1                      ;Send Homing Line
+            call @usr_home_axis
+        else
+            line = line + 1                     ;Keep track of lines. Not Used!!
+            iHomingmode = mode                  ;Send Homing Mode
+            cHomep = pstr                       ;Send Preperation String
+            sHomeline = s1                      ;Send Homing Line
+            call @usr_home_axis
+            i = 50                              ;Force end of While-Loop
+        endif
+        if i ne 50
+            s1 = substr(s1,p1+1,l)              ;Remove Homing mode from Temp String
+            l = strlen(s1)                      ;Get string length of Temp String
+        endif
+    endw
+endp
+
+@usr_home_axis
+    ; Handle output for homing the X-axis
+    local numeric sav_nWorkOffset
+    sav_nWorkOffset = nWorkOffset
+    if iHomingmode eq 1
+        {nb,cHomep'G28 'sHomeline}
+    endif
+    if iHomingmode eq 2
+        {nb,cHomep'G28 '}
+        iAbsincmode = 91
+        change(iAbsincmode) = true
+        ;{[iAbsincmode]}
+        { sHomeline}
+        iAbsincmode = 90
+        change(iAbsincmode) = true
+    endif
+    if iHomingmode eq 3 or iHomingmode eq 4
+        if iWorkOffsetmode eq 1 or iWorkOffsetmode eq 3
+            nWorkOffset = 59
+    ;rwd        
+            {nb,cHomep,[nWorkoffset]}
+        endif
+        if iWorkOffsetmode eq 2
+            nWorkOffset = 0
+            {nb,cHomep,[nWorkoffset]}
+        endif
+        ;{[iAbsincmode]}
+        { sHomeline}
+        nWorkOffset = sav_nWorkOffset
+        if iHomingmode eq 3
+            change(nWorkOffset) = false
+        endif
+    endif
+    if iHomingmode eq 5
+        {nb,cHomep'G30 'sHomeline}
+    endif
+    if iHomingmode eq 6
+        {nb,cHomep'G30 '}
+        iAbsincmode = 91
+        change(iAbsincmode) = true
+        ;{[iAbsincmode]}
+        { sHomeline}
+        iAbsincmode = 90
+        change(iAbsincmode) = true
+    endif
+    if iHomingmode eq 7
+        {nb, sHomeline}
+    endif
+endp
+
+
+@offset_change
+    ; Handle setting of Diameter offset
+    iDiameteroffset = d_offset
+endp
+
+@tool_breakage
+    
+    ;b_cktool = true
+    ;{nb,'M9'}
+    ;{nb,'G91 G28 Z0 M5'}
+    ;{nb,'(P9858 = BROKEN TOOL CHECK)'}
+    ;{nb,'(T=TOOL TO CHECK/H=TOLERANCE)'}
+    ;if tool_type eq end_mill
+    ;   {nb,'M165 P9858 D',tool_offset,'H',tolerance_len,'T',tool_number}
+    ;else
+    ;   {nb,'M165 P9858 H',tolerance_len,'T',tool_number} 
+    ;endif
+    ;{nb,'G91 G28 Z0'}
+    ;{nb,'M1'}
+endp
+
+
+@call_proc
+    ; Handle call to subroutine
+
+endp
+
+@proc
+
+endp
+
+@end_proc
+
+endp
+
+@loop_matrix_info
+
+endp
+
+@loop
+
+endp
+
+@end_loop
+
+endp
+
+@rotate_to_plane
+
+endp
+
+@tool_path_info
+endp

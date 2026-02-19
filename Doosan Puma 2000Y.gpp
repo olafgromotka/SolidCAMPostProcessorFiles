@@ -1,0 +1,1632 @@
+;Software    : SolidCAM 2016
+;Machine     : Doosan Lynx
+;Written by  : Florin
+;Rev 1.0 : 08.01.2023 : HG : Added Tail Stock advance/retract MCOs
+;Rev 1.1 : 08.11.2023 : HG : Revised Tail Stock advance/retract MCOs. Added Bar Pull MCO.
+@init_post
+	if user_account eq 'HarryGlover'
+		global logical bOneTraceMessage
+		if !bOneTraceMessage
+			global integer iTraceLevel
+			input "Trace Level" , iTraceLevel
+			trace "all" : iTraceLevel
+			bOneTraceMessage = 1
+		endif
+	endif
+	blknum_f = '8.0(p)'
+	blknum_gen = 0
+	blknum_exist = 1
+	blknum = 1
+	blknum_delta = 1
+	; general variables
+	global numeric a b f h i j k x y z nRapidFeed nRadialRetrLevel
+	global integer iLinRnd iAngRnd iOpType iGcode iComp iJobNum<<999>> iStationNum iMacNum iToolStation<<999>> iToolOffset<<999>> 
+	global logical bOnOff bFirstMove bHomeRef<<3>> bGoToRef bBlkNum bMachCtrl bRadCrt
+	global string sTool sGcode sComp sAbort sHomeRef s_IN s_OUT
+	iStationNum = 12 ; num of stations on turret
+	; coolant variables
+	global logical bTrFloodCoolant
+	global string sTrFloodCoolant<<2>>
+	sTrFloodCoolant<<1>> = 'M08' ; on
+	sTrFloodCoolant<<2>> = 'M09' ; off
+	; spindle variables
+	global string sSpinDir<<2,3>> sSpindleMode<<2>> sSpindleClamp<<2>> sChuckClamp<<2>>
+	global integer iSpindleMode iSpindleClamp iSpinDir
+	sSpinDir<<1,1>>    = 'M03' ; sp cw
+	sSpinDir<<1,2>>    = 'M04' ; sp ccw
+	sSpinDir<<1,3>>    = 'M05' ; sp off
+	sSpinDir<<2,1>>    = 'M33' ; tr cw
+	sSpinDir<<2,2>>    = 'M34' ; tr ccw
+	sSpinDir<<2,3>>    = 'M35' ; tr off
+	sSpindleMode<<1>>  = 'M35' ; sp milling
+	sSpindleMode<<2>>  = 'M05' ; sp turning
+	sSpindleClamp<<1>> = 'M89' ; sp clamp
+	sSpindleClamp<<2>> = 'M90' ; sp unclamp
+	sChuckClamp<<1>>   = 'M68' ; sp clamp
+	sChuckClamp<<2>>   = 'M69' ; sp unclamp
+	; home position
+	global numeric nHome<<54,3>> ; <<mac_number,xyz>>
+	; part catcher
+	global string sPartCatcher<<2>>
+	sPartCatcher<<1>> = 'M10' ; advance
+	sPartCatcher<<2>> = 'M11' ; retract
+	; chip conveyor
+	global string sChipConveyor<<2>>
+	sChipConveyor<<1>> = 'M24' ; run
+	sChipConveyor<<2>> = 'M25' ; stop
+endp
+
+@start_of_file
+	if build_revision lt 81735 ; 2016 SP3 hf2
+		call @uAbort(('!!! THIS POST WORKS WITH SOLIDCAM 2016 SP3 hf2 AND LATER !!!'))
+	endif
+	call @uRadialRetrLevel
+	call @uVariablesFormat
+	{'!!open file='g_file_name'.tmp!!'}
+	{nl'%'}
+	call @uReplace(part_name)
+	{nl,program_number:'<O>z4.0(p)< (>'s_OUT')'}
+	{nl'('upper(replace(date,'-','_'))' 'upper(replace(time,'-','_'))')'}
+	if mo_p1 ne ''
+		call @uReplace(mo_p1)
+		{nl'('s_OUT')'}
+	endif
+	if mo_p2 ne ''
+		call @uReplace(mo_p2)
+		{nl'('s_OUT')'}
+	endif
+	if mo_p3 ne ''
+		call @uReplace(mo_p3)
+		{nl'('s_OUT')'}
+	endif
+	if mo_p4 ne ''
+		call @uReplace(mo_p4)
+		{nl'('s_OUT')'}
+	endif
+	if mo_p5 ne ''
+		call @uReplace(mo_p5)
+		{nl'('s_OUT')'}
+	endif
+endp
+
+@end_of_file
+	{nl'%'}
+	{nl'!!close file='g_file_name'.tmp!!'}
+	{nl'!!copy file='g_file_name'.tmp!!'}
+	{nl'!!delete file='g_file_name'.tmp!!'}
+	integer_def_f = '8.0(p)' ; for start_line and end_line in turning cycles
+endp
+
+@def_tool
+	{nl,tool_number:'<(TOOL >8.0(p)< >'tool_position_in_turret:'<STATION >z2.0(p)< >'}
+	{(tool_position_in_turret+(tool_position-1)*iStationNum):'<OFFSET >z2.0(p)'}
+	if tool_message ne ''
+		call @uReplace(tool_message)
+		{' * 's_OUT}
+	endif
+	{')'}
+	if msg_mill_tool1 ne ''
+		call @uReplace(msg_mill_tool1)
+		{nl'('s_OUT')'}
+	endif
+	if msg_mill_tool2 ne ''
+		call @uReplace(msg_mill_tool2)
+		{nl'('s_OUT')'}
+	endif
+	if msg_mill_tool3 ne ''
+		call @uReplace(msg_mill_tool3)
+		{nl'('s_OUT')'}
+	endif
+	if msg_mill_tool4 ne ''
+		call @uReplace(msg_mill_tool4)
+		{nl'('s_OUT')'}
+	endif
+	if msg_mill_tool5 ne ''
+		call @uReplace(msg_mill_tool5)
+		{nl'('s_OUT')'}
+	endif
+	iToolStation<<tool_number>> = tool_position_in_turret
+	iToolOffset<<tool_number>> = tool_position_in_turret + ( tool_position - 1 ) * iStationNum
+endp
+
+@def_turn_tool
+	{nl,tool_number:'<(TOOL >8.0(p)< >'tool_position_in_turret:'<STATION >z2.0(p)< >'}
+	{(tool_position_in_turret+(tool_position-1)*iStationNum):'<OFFSET >z2.0(p)'}
+	if tool_message ne ''
+		call @uReplace(tool_message)
+		{' * 's_OUT}
+	endif
+	{')'}
+	if msg_turn_tool1 ne ''
+		call @uReplace(msg_turn_tool1)
+		{nl'('s_OUT')'}
+	endif
+	if msg_turn_tool2 ne ''
+		call @uReplace(msg_turn_tool2)
+		{nl'('s_OUT')'}
+	endif
+	if msg_turn_tool3 ne ''
+		call @uReplace(msg_turn_tool3)
+		{nl'('s_OUT')'}
+	endif
+	if msg_turn_tool4 ne ''
+		call @uReplace(msg_turn_tool4)
+		{nl'('s_OUT')'}
+	endif
+	if msg_turn_tool5 ne ''
+		call @uReplace(msg_turn_tool5)
+		{nl'('s_OUT')'}
+	endif
+	iToolStation<<tool_number>> = tool_position_in_turret
+	iToolOffset<<tool_number>> = tool_position_in_turret + ( tool_position - 1 ) * iStationNum
+endp
+
+@end_program
+	call @uEndCoolant
+	call @uEndSpin
+	call @uHomeRef(('111'))
+	if iSpindleMode eq 1
+		{nb,sSpindleMode<<2>>}
+	endif
+	{nb'M30'}
+endp
+
+@change_tool
+	bGoToRef = sign(change(xrtool)+change(yrtool)+change(zrtool))
+	if bMachCtrl
+		call @uToolChg
+	endif
+endp
+
+@turn_change_tool
+	call @change_tool
+endp
+
+@fourth_axis
+	if job_type eq 'thread' and !fourth_axis_first and !fourth_axis_last
+		if a ne (round(first_axis_angle,iAngRnd))
+			call @uSpindleClamp((0))
+			a = round(first_axis_angle,iAngRnd)
+			{nb'C'a}
+			call @uSpindleClamp((1))
+		endif
+	endif
+endp
+
+@start_of_job
+	bFirstMove = 1
+endp
+
+@end_of_job
+	if job_machine_type eq milling
+		if iOpType eq 4
+			{nb'G13.1'}
+		endif
+		if a gt 360 or a lt -360
+			call @uSpindleClamp((0))
+			{nb'G28 H0.'}
+		endif
+	else ; turning
+		if spin_unit eq css
+			local integer ii
+			if x eq 0
+				ii = round(spin_limit,0)
+			else
+				ii = round((spin*(1000-988*inch_system))/(abs(x)*pi),0)
+			endif
+			if ii gt round(spin_limit,0)
+				ii = round(spin_limit,0)
+			endif
+			if ii lt spin_min_limit
+				ii = spin_min_limit
+			endif
+			{nb'G97 S'ii}
+		endif
+	endif
+	if tmp_p5
+		{nb,sPartCatcher<<2>>}
+		tmp_p5 = 0
+	endif
+	if mo_p7 and next_command ne '@end_program'
+		{nb'M01'}
+	endif
+endp
+
+@feed_spin
+	if change(spin) and !bFirstMove
+		{nb'S'(int(round(spin,0)))}
+	endif
+endp
+
+@m_feed_spin
+	call @feed_spin
+endp
+
+@rapid_move
+	call @uMove
+endp
+
+@line
+	call @uMove
+endp
+
+@arc
+	call @uMove
+endp
+
+@move_4x
+	call @uMove
+endp
+
+@move4x_cartesian
+	call @uMove
+endp
+
+@line4x_cartesian
+	call @uMove
+endp
+
+@arc4x_cartesian
+	call @uMove
+endp
+
+@move_5x
+	call @uMove
+endp
+
+@line_5x
+	call @uMove
+endp
+
+@arc_5x
+	call @uMove
+	if iOpType eq 3
+		call @uAbort((' * ' + upper(job_name) + ' * ARCS NOT SUPPORTED BY CONTROLLER IN FACE POLAR MODE'))
+	endif
+	if iOpType eq 5
+		call @uAbort((' * ' + upper(job_name) + ' * ARCS NOT SUPPORTED BY CONTROLLER IN RADIAL POLAR MODE'))
+	endif
+endp
+
+@compensation
+	if side eq 0
+		side = 2
+	elseif side eq 2
+		side = 0
+	endif
+	if side ne 0 and iOpType eq 3
+		call @uAbort((' * ' + upper(job_name) + ' * COMPENSATION NOT SUPPORTED BY CONTROLLER IN FACE POLAR MODE'))
+	endif
+	if side ne 0 and iOpType eq 5
+		call @uAbort((' * ' + upper(job_name) + ' * COMPENSATION NOT SUPPORTED BY CONTROLLER IN RADIAL POLAR MODE'))
+	endif
+	if side ne 0 and b ne 0 and b ne 90 and b ne 180
+		call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * COMPENSATION UNAVAILABLE WITH ANGLE-HEAD'))
+	endif
+endp
+
+@drill
+	if !x5_job
+		call @uFirstMove
+	endif
+	iGcode = 0
+	call @uXYZA
+	if drill_type eq 2
+		if spin_direction eq ccw
+			{nb'M72'}
+		endif
+		{nb'M29 S'(int(round(spin,0)))}
+	endif
+	{nb}
+	if drill_type eq 0 or drill_type eq 1
+		if b eq 90
+			{'G87 '}
+		else
+			{'G83 '}
+		endif
+	endif
+	if drill_type eq 2
+		if b eq 90
+			{'G88 '}
+		else
+			{'G84 '}
+		endif
+	endif
+	if drill_type eq 3
+		if b eq 90
+			{'G89 '}
+		else
+			{'G85 '}
+		endif
+	endif
+	if b eq 90
+		if x5_job
+			{'X'(round((xopos-drill_depth)*2,iLinRnd))' '}
+		else
+			{'X'(round(drill_lower_zo*2,iLinRnd))' '}
+			;{'R'(round((drill_upper_zo-drill_clearance_zo)*2,iLinRnd))' '}
+			{'R'(round(drill_upper_zo*2,iLinRnd))' '}
+		endif
+	else
+		if x5_job
+			{'Z'(round(zopos-drill_depth,iLinRnd))' '}
+		else
+			{'Z'(round(drill_lower_zo,iLinRnd))' '}
+			;{'R'(round(drill_upper_zo-drill_clearance_zo,iLinRnd))' '}
+			{'R'(round(drill_upper_zo,iLinRnd))' '}
+		endif
+	endif
+	if drill_type eq 0 or drill_type eq 1
+		if drill_type eq 0
+			down_step = drill_depth
+		elseif drill_type eq 1
+			if down_step eq 0
+				down_step = drill_depth/(int(drill_depth/tool_diameter)+1)
+			else
+				down_step = drill_depth/(int(drill_depth/down_step)+1)
+			endif
+		endif
+		{'Q'(int(round(down_step*pow(10,iLinRnd),0)))' '}
+	endif
+	if ( drill_type eq 0 or drill_type eq 1 or drill_type eq 3 ) and dwell ne 0
+		{'P'(round(dwell,3))' '}
+	endif
+	call @uFeed
+	{'F'f' '}
+	if iOpType ge 3
+		{sSpindleClamp<<1>>}
+	endif
+endp
+
+@drill_point
+	if !first_drill
+		call @uXYZA
+		{nb}
+		if iOpType eq 2
+			{['X'x' ']['Y'y' ']['Z'z' ']}
+		elseif iOpType eq 3 or iOpType eq 5
+			{['X'x' ']['Z'z' ']['C'a' ']}
+		elseif iOpType eq 4
+			{['X'x' ']['C'y' ']}
+		endif
+		if drill_type eq 0 or drill_type eq 1
+			{'Q'(int(round(down_step*pow(10,iLinRnd),0)))' '}
+		endif
+		if iOpType ge 3
+			{sSpindleClamp<<1>>}
+		endif
+	endif
+endp
+
+@end_drill
+	if drill_type eq 2 and spin_direction eq ccw
+		{nb'M73'}
+	endif
+	{nb'G80'}
+	iGcode = 0
+endp
+
+@turn_drill
+	iGcode = 0
+	if drill_type eq 2
+		{nb'M29 S'(int(round(spin,0)))}
+	endif
+	{nb}
+	if drill_type eq 0 or drill_type eq 1
+		{'G83 '}
+	endif
+	if drill_type eq 2
+		{'G84 '}
+	endif
+	if drill_type eq 3
+		{'G85 '}
+	endif
+	{'Z'(round(drill_lower_z,iLinRnd))' '}
+	drill_depth = abs(z-drill_lower_z)
+	if drill_type eq 0 or drill_type eq 1
+		if drill_type eq 0
+			down_step = drill_depth
+		elseif drill_type eq 1
+			if down_step eq 0
+				down_step = drill_depth/(int(drill_depth/tool_diameter)+1)
+			else
+				down_step = drill_depth/(int(drill_depth/down_step)+1)
+			endif
+		endif
+		{'Q'(int(round(down_step*pow(10,iLinRnd),0)))' '}
+	endif
+	if ( drill_type eq 0 or drill_type eq 1 or drill_type eq 3 ) and dwell ne 0
+		{'P'(round(dwell,3))' '}
+	endif
+	call @uFeed
+	{'F'f' '}
+	{nb'G80'}
+endp
+
+@turning
+	if work_type eq rough
+		if process_type eq long
+			{nb'G71 U'(round(down_step,iLinRnd))' '}
+			{'R'(round(retreat_distance,iLinRnd))}
+			{nb'G71 P'start_line' Q'end_line' '}
+			{'U'(round(rough_offset_x*2,iLinRnd))' '}
+			{'W'(round(rough_offset_z,iLinRnd))' '}
+			{'F'(round(feed,iLinRnd))' '}
+		else ; face
+			{nb'G72 W'(round(down_step,iLinRnd))' '}
+			{'R'(round(retreat_distance,iLinRnd))}
+			{nb'G72 P'start_line' Q'end_line' '}
+			{'U'(round(rough_offset_x*2,iLinRnd))' '}
+			{'W'(round(rough_offset_z,iLinRnd))' '}
+			{'F'(round(feed,iLinRnd))' '}
+		endif
+	elseif work_type eq copy
+		{nb'G73 W'(round(retreat_distance,iLinRnd))' '}
+		{'U'(round(retreat_distance,iLinRnd))' '}
+		{'R'number_of_offsets}
+		{nb'G73 P'start_line' Q'end_line' '}
+		{'U'(round(rough_offset_x*2,iLinRnd))' '}
+		{'W'(round(rough_offset_z,iLinRnd))' '}
+		{'F'(round(feed,iLinRnd))}
+	elseif work_type eq profile
+		{nb'G70 P'start_line' Q'end_line' '}
+	endif
+	iGcode = 0
+	f = 0
+endp
+
+@thread
+	if process_type eq face
+		call @uAbort((' * ' + upper(job_name) + ' * NO CYCLE TO SUPPORT FACE THREADING'))
+	endif
+	if inch_system
+		if lead_unit eq 0 ; mm
+			lead = lead / 25.4
+		else ; tpi
+			lead = 1 / lead
+		endif
+	else ; metric
+		if lead_unit eq 1 ; tpi
+			lead = 25.4 / lead
+		endif
+	endif
+	if work_type eq 0 ; once
+		{nb'G92 X'(round(last_pos_x*2,iLinRnd))' Z'(round(last_pos_z,iLinRnd))' '}
+		{(round(last_pos_x-first_pos_x,iLinRnd)):'<R>8.8(d)'' F'(round(lead,iLinRnd))}
+	else ; multiple
+		{nb'G76 P'tmp_p1:'z2.0(p)'tmp_p2:'z2.0(p)'tool_ALFA:'z2.0(p)< >'}
+		{'Q'(int(round(tmp_p4*pow(10,iLinRnd),0)))' '}
+		{'R'(round(tmp_p3,iLinRnd))}
+		{nb'G76 X'(round(last_pos_x*2,iLinRnd))' Z'(round(last_pos_z,iLinRnd))' '}
+		{(round(first_pos_x-last_pos_x,iLinRnd)):'<R>8.8(d)< >'}
+		{'P'(int(round(depth*pow(10,iLinRnd),0)))' Q'(int(round(down_step*pow(10,iLinRnd),0)))' F'(round(lead,iLinRnd))}
+	endif
+	iGcode = 0
+	f = 0
+endp
+
+@groove
+	if down_step eq 999999
+		down_step = 0
+	endif
+	if work_type eq 0
+		if process_type eq long
+			{nb'G75 R'(round(release_dist,iLinRnd))}
+			{nb'G75 X'(round(last_pos_x*2,iLinRnd))' '}
+			{'Z'(round(last_pos_z,iLinRnd))' '}
+			{(round(down_step,iLinRnd)):'<P>8.8(d)< >'}
+			{(round(side_step,iLinRnd)):'<Q>8.8(d)< >'}
+			{'F'(round(feed,iLinRnd))}
+		else
+			{nb'G74 R'(round(release_dist,iLinRnd))}
+			{nb'G74 X'(round(last_pos_x*2,iLinRnd))' '}
+			{'Z'(round(last_pos_z,iLinRnd))' '}
+			{(round(down_step,iLinRnd)):'<Q>8.8(d)< >'}
+			{(round(side_step,iLinRnd)):'<P>8.8(d)< >'}
+			{'F'(round(feed,iLinRnd))}
+		endif
+	else
+		if process_type eq long
+			{nb'G75 X'(round(last_pos_x*2,iLinRnd))' '}
+			{(round(down_step,iLinRnd)):'<P>8.8(d)< >'}
+			{'F'(round(feed,iLinRnd))}
+		else
+			{nb'G74 Z'(round(last_pos_z,iLinRnd))' '}
+			{(round(down_step,iLinRnd)):'<Q>8.8(d)< >'}
+			{'F'(round(feed,iLinRnd))}
+		endif
+	endif
+	iGcode = 0
+	f = 0
+endp
+
+@turn_proc
+	if !blknum_gen
+		blknum_gen = 1
+		bBlkNum = 1 ; remember to turn off block generation
+	endif
+	iGcode = 0
+	f = 0
+endp
+
+@turn_endproc
+	if bBlkNum
+		blknum_gen = 0
+		bBlkNum = 0
+	endif
+	iGcode = 0
+	f = 0
+endp
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+@start_mach_ctrl
+	call @uReplace(job_name)
+	if blknum_gen
+		{nl'('index_job' * 's_OUT')'}
+	else
+		if iJobNum<<index_job>> eq 0
+			iJobNum<<index_job>> = index_job * 1000
+		else
+			iJobNum<<index_job>> = iJobNum<<index_job>> + 1
+		endif
+		{nl'N'iJobNum<<index_job>>' ('s_OUT')'}
+	endif
+	bMachCtrl = 1
+endp
+
+@end_mach_ctrl
+	bMachCtrl = 0
+endp
+
+@start_obj_act
+	bFirstMove = 1
+endp
+
+@end_obj_act
+	bFirstMove = 0
+endp
+
+@move_object
+	if MCO_CoordSysType eq 1 ; mach coordsys
+		if !is_rapid_move
+			call @uAbort((' * ' + upper(job_name) + ' * FEED NOT ALLOWED FOR MOVEMENTS IN MACHINE COORDSYS'))
+		endif
+		if DeviceType eq 1 ; spindle
+			if !userDef_z and userDef_a and move_axis_a eq 0
+				{nb'G28 H0.'}
+			else
+				{nb'G53 '}
+				if userDef_a 
+					{'C'(round(move_axis_a,iAngRnd))' '}
+				endif
+			endif
+		elseif DeviceType eq 2 ; turret
+			if userDef_x and move_axis_x eq 0 and userDef_y and move_axis_y eq 0 and userDef_z and move_axis_z eq 0
+				if bHomeRef<<1>> and bHomeRef<<2>> and bHomeRef<<3>>
+					;
+				elseif bHomeRef<<1>> and bHomeRef<<2>>
+					{nb'G28 W0.'}
+				elseif bHomeRef<<1>> and bHomeRef<<3>>
+					{nb'G28 V0.'}
+				elseif bHomeRef<<2>> and bHomeRef<<3>>
+					{nb'G28 U0.'}
+				elseif bHomeRef<<1>>
+					{nb'G28 V0. W0.'}
+				elseif bHomeRef<<2>>
+					{nb'G28 U0. W0.'}
+				elseif bHomeRef<<3>>
+					{nb'G28 U0. V0.'}
+				else
+					{nb'G28 U0. V0. W0.'}
+				endif
+			elseif userDef_x and move_axis_x eq 0 and userDef_y and move_axis_y eq 0 and !userDef_z
+				if bHomeRef<<1>> and bHomeRef<<2>>
+					;
+				elseif bHomeRef<<1>>
+					{nb'G28 V0.'}
+				elseif bHomeRef<<2>>
+					{nb'G28 U0.'}
+				else
+					{nb'G28 U0. V0.'}
+				endif
+			elseif userDef_x and move_axis_x eq 0 and !userDef_y and userDef_z and move_axis_z eq 0
+				if bHomeRef<<1>> and bHomeRef<<3>>
+					;
+				elseif bHomeRef<<1>>
+					{nb'G28 W0.'}
+				elseif bHomeRef<<3>>
+					{nb'G28 U0.'}
+				else
+					{nb'G28 U0. W0.'}
+				endif
+			elseif !userDef_x and userDef_y and move_axis_y eq 0 and userDef_z and move_axis_z eq 0
+				if bHomeRef<<2>> and bHomeRef<<3>>
+					;
+				elseif bHomeRef<<2>>
+					{nb'G28 W0.'}
+				elseif bHomeRef<<3>>
+					{nb'G28 V0.'}
+				else
+					{nb'G28 V0. W0.'}
+				endif
+			elseif userDef_x and move_axis_x eq 0 and !userDef_y and !userDef_z
+				if !bHomeRef<<1>>
+					{nb'G28 U0.'}
+				endif
+			elseif !userDef_x and ( userDef_y and move_axis_y eq 0 ) and !userDef_z
+				if !bHomeRef<<2>>
+					{nb'G28 V0.'}
+				endif
+			elseif !userDef_x and !userDef_y and userDef_z and move_axis_z eq 0
+				if !bHomeRef<<3>>
+					{nb'G28 W0.'}
+				endif
+			else
+				{nb'G53 '}
+				if userDef_x
+					{'X'(round(move_axis_x,iLinRnd))' '}
+				endif
+				if userDef_y
+					{'Y'(round(move_axis_y,iLinRnd))' '}
+				endif
+				if userDef_z
+					{'Z'(round(move_axis_z,iLinRnd))' '}
+				endif
+			endif
+			if userDef_x
+				if move_axis_x eq 0
+					bHomeRef<<1>> = 1
+				else
+					bHomeRef<<1>> = 0
+				endif
+			endif
+			if userDef_y
+				if move_axis_y eq 0
+					bHomeRef<<2>> = 1
+				else
+					bHomeRef<<2>> = 0
+				endif
+			endif
+			if userDef_z
+				if move_axis_z eq 0
+					bHomeRef<<3>> = 1
+				else
+					bHomeRef<<3>> = 0
+				endif
+			endif
+		endif
+	elseif MCO_CoordSysType eq 2 ; part coordsys
+		if bFirstMove
+			{nb}
+			if mac_number le 6
+				{'G'(int(53+mac_number))' '}
+			else
+				{'G54.1 P'(int(mac_number-6))' '}
+			endif
+			iMacNum = mac_number
+			{'G98'}
+			iGcode = 0
+		endif
+		{nb}
+		if is_rapid_move and iGcode ne 1
+			{'G00 '}
+			iGcode = 1
+		elseif !is_rapid_move and iGcode ne 2
+			{'G01 '}
+			iGcode = 2
+		endif
+		if DeviceType eq -1
+			if userDef_x
+				{'X'(round(xh_move,iLinRnd))' '}
+			endif
+			if userDef_y
+				{'Y'(round(yh_move,iLinRnd))' '}
+			endif
+			if userDef_z
+				{'Z'(round(zh_move,iLinRnd))' '}
+			endif
+			if userDef_a
+				{'C'(round(ah_move,iAngRnd))' '}
+			endif
+		elseif DeviceType eq 1
+			if userDef_z
+				{'B'(round(zh_move,iLinRnd))' '}
+			endif
+			if userDef_a
+				{'C'(round(ah_move,iAngRnd))' '}
+			endif
+		elseif DeviceType eq 2
+			if userDef_x
+				{'X'(round(xh_move,iLinRnd))' '}
+				bHomeRef<<1>> = 0
+			endif
+			if userDef_y
+				{'Y'(round(yh_move,iLinRnd))' '}
+				bHomeRef<<2>> = 0
+			endif
+			if userDef_z
+				{'Z'(round(zh_move,iLinRnd))' '}
+				bHomeRef<<3>> = 0
+			endif
+		endif
+		if !is_rapid_move and change(feed_move)
+			{'F'(round(feed_move,iLinRnd))}
+		endif
+		bFirstMove = 0
+	endif
+endp
+
+@mco_cycle
+	if MCO_CycleName eq 'mco_cycle_1'
+		call @uEndCoolant
+		call @uEndSpin
+		call @uHomeRef(('111'))
+		{nb,iToolStation<<mco_cycle_1_p1>>:'<T>z2.0(p)'iToolOffset<<mco_cycle_1_p1>>:'z2.0(p)'}
+		if iSpindleMode ne mco_cycle_1_p8
+			{nb,sSpindleMode<<mco_cycle_1_p8>>}
+			iSpindleMode = mco_cycle_1_p8
+		endif
+		{nb'G00 '}
+		if mac_number le 6
+			{'G'(53+mac_number)' '}
+		else
+			{'G54.1 P'(mac_number-6)' '}
+		endif
+		iMacNum = mac_number
+		{'X'(round(mco_cycle_1_p2,iLinRnd))' Z'(round(mco_cycle_1_p3,iLinRnd))}
+		{nb'G01 G98 Z'(round(mco_cycle_1_p4,iLinRnd))' F'(round(mco_cycle_1_p5,iLinRnd))}
+		{nb,sChuckClamp<<2>>}
+		{nb'Z'(round(mco_cycle_1_p6,iLinRnd))}
+		{nb,sChuckClamp<<1>>}
+		{nb'G00 Z'(round(mco_cycle_1_p7,iLinRnd))}
+		bHomeRef<<1>> = 0
+		bHomeRef<<3>> = 0
+		call @uHomeRef(('101'))
+		{nb'M55'}
+		{nb'M01'}
+	endif
+
+	if MCO_CycleName eq 'Tail_Stock_Advance' or instr(job_name,'Tail Stock Advance')
+		{nb,'G28 U0. V0.'}
+		{nb,'G28 W0. '}
+		{nb,'M47 (TAILSTOCK UNCLAMP) '}
+		;{nb,'G01 Z'nTSP' ','F'iZFR,' (MOVE TURRET TO CLAMPING LOCATION) '}
+		{nb,'G00 Z'nTSP' (MOVE TURRET TO CLAMPING LOCATION) '}
+		{nb,'M46 (TAILSTOCK CLAMP) '}
+		{nb,'G28 U0. V0.'}
+		{nb,'G28 W0. (Z HOME) '}
+		{nb,'G04 P'iDT:'2.0< >',' (DWELL TIME) '}
+		{nb,'M78(QUILL ADVANCE) '}
+		{nb,'G04 P'iDT:'2.0< >',' (DWELL TIME) '}
+		{nb,'M01 '}
+	endif
+
+	if MCO_CycleName eq 'Tail_Stock_Retract' or instr(job_name,'Tail Stock Retract')
+		{nb,'M05 (STOP SPINDLE) '}
+		{nb,'G28 U0. V0. '}
+		{nb,'G28 W0. '}
+		{nb,'M79 (QUILL RETRACT) '}
+		{nb,'G04 P'iDT:'2.0< >',' (DWELL TIME) '}
+		{nb,'G00 Z'nTSP' (MOVE TURRET TO TAILSTOCK PIN POSITION) '}
+		{nb,'M47 (TAILSTOCK UNCLAMP) '}
+		{nb,'G28 U0. V0. '}
+		{nb,'G28 W0. '}
+		{nb,'M46 (TAILSTOCK CLAMP) '}
+		{nb,'M01 '}
+	endif
+
+	if MCO_CycleName eq 'Bar_Pull' or instr(job_name,'Bar Pull')
+		{nb,'G28 U0. V0. W0. '}
+		{nb,'M05 (STOP SPINDLE) '}
+		{nb,'M09 (STOP COOLANT) '}
+		{nb,'T1010 (BAR PULLER) '}
+		{nb,'G00 G54 Z'nRTSP,' (RAPID TO SAFE POSITION) '}
+		{nb,'G00 X0. Y0. '}
+		{nb,'G00 Z'nGP,' (GRIPPING POSITION) '}
+		{nb,'M69 (CHUCK OPEN) '}
+		{nb,'G04 P'nBPDT:'2.0< >'' '}
+		{nb,'G00 Z'nPOBP,' (PULLOUT BAR TO SPECIFIED POSITION) '}
+		{nb,'M68 (CHUCK CLOSE) '}
+		{nb,'G04 P'nBPDT:'2.0< >'' '}
+		{nb,'G00 Z'nRTSPAP,' (RAPID TO SAFE POSITION) '}
+		{nb,'G28 U0. V0. W0. '}
+		{nb,'M01 '}
+	endif
+endp
+
+@cool_flood
+	if DeviceType eq 0
+		;
+	elseif DeviceType eq 2
+		if flood_coolant eq 1 and !bTrFloodCoolant
+			{nb,sTrFloodCoolant<<1>>}
+			bTrFloodCoolant = 1
+		endif
+		if flood_coolant eq 2 and bTrFloodCoolant
+			{nb,sTrFloodCoolant<<2>>}
+			bTrFloodCoolant = 0
+		endif
+	endif
+endp
+
+@dwell
+	{nb'G04 U'(round(dwell_time,3))}
+endp
+
+@machine_stop
+	{nb'M00'}
+endp
+
+@machine_opt_stop
+	{nb'M01'}
+endp
+
+@act
+	if DeviceType eq 5
+		if move_act eq 1
+			{nb,sPartCatcher<<1>>}
+		endif
+		if move_act eq 2
+			{nb,sPartCatcher<<2>>}
+		endif
+	endif
+endp
+
+@mco_message
+	{nb,message}
+endp
+
+@open_close_obj
+	if DeviceType eq 1
+		if open_close eq 1
+			{nb,sChuckClamp<<2>>}
+		endif
+		if open_close eq 2
+			{nb,sChuckClamp<<1>>}
+		endif
+	elseif DeviceType eq 2
+		;
+	endif
+endp
+
+@spin
+	if DeviceType eq 1
+		if spin_direction eq 3
+			if iSpinDir eq 1 or iSpinDir eq 2
+				{nb,sSpinDir<<1,3>>}
+				iSpinDir = 0
+			endif
+		else
+			{nb'G97 S'(int(round(spin_rate,0)))' 'sSpinDir<<1,spin_direction+1>>}
+			iSpinDir = spin_direction + 1
+		endif
+	elseif DeviceType eq 2
+		if spin_direction eq 3
+			if iSpinDir eq 3 or iSpinDir eq 4
+				{nb,sSpinDir<<2,3>>}
+				iSpinDir = 0
+			endif
+		else
+			{nb'G97 S'(int(round(spin_rate,0)))' 'sSpinDir<<2,spin_direction+1>>}
+			iSpinDir = spin_direction + 3
+		endif
+	endif
+endp
+
+@working_mode
+	exit
+	if MCO_Working_Mode eq 1 and iSpindleMode ne 1
+		{nb,sSpindleMode<<1>>}
+	endif
+	if MCO_Working_Mode eq 2 and iSpindleMode ne 2
+		{nb,sSpindleMode<<2>>}
+	endif
+endp
+
+@unload_tool
+	call @uEndCoolant
+	call @uEndSpin
+	{nb,tool_position_in_turret:'<T>z2.0(p)<00>'}
+	sTool = ''
+endp
+
+;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+@uVariablesFormat
+	numeric_def_f = '8.8'
+	integer_def_f = '8.0(p)'
+	iAngRnd       = 3 ; angle rounding precision
+	if inch_system
+		iLinRnd       = 4 ; inch rounding precision
+		nRapidFeed = 200
+	else ; metric
+		iLinRnd       = 3 ; metric rounding precision
+		nRapidFeed = 5000
+	endif
+endp
+
+@uToolChg
+	;      tool position    A  B  C  D  E  F  G  H  I                        A  B  C  D  E  F  G                        A  B  C  D  E
+	;   station 01 : offset 01 13 25 37 49 61 73 85 97   station 01 : offset 01 17 33 49 65 81 97   station 01 : offset 01 25 49 73 97
+	;   station 02 : offset 02 14 26 38 50 62 74 86 98   station 02 : offset 02 18 34 50 66 82 98   station 02 : offset 02 26 50 74 98
+	;   station 03 : offset 03 15 27 39 51 63 75 87 99   station 03 : offset 03 19 35 51 67 83 99   station 03 : offset 03 27 51 75 99
+	;   station 04 : offset 04 16 28 40 52 64 76 88      station 04 : offset 04 20 36 52 68 84      station 04 : offset 04 28 52 76
+	;   station 05 : offset 05 17 29 41 53 65 77 89      station 05 : offset 05 21 37 53 69 85      station 05 : offset 05 29 53 77
+	;   station 06 : offset 06 18 30 42 54 66 78 90      station 06 : offset 06 22 38 54 70 86      station 06 : offset 06 30 54 78
+	;   station 07 : offset 07 19 31 43 55 67 79 91      station 07 : offset 07 23 39 55 71 87      station 07 : offset 07 31 55 79
+	;   station 08 : offset 08 20 32 44 56 68 80 92      station 08 : offset 08 24 40 56 72 88      station 08 : offset 08 32 56 80
+	;   station 09 : offset 09 21 33 45 57 69 81 93      station 09 : offset 09 25 41 57 73 89      station 09 : offset 09 33 57 81
+	;   station 10 : offset 10 22 34 46 58 70 82 94      station 10 : offset 10 26 42 58 74 90      station 10 : offset 10 34 58 82
+	;   station 11 : offset 11 23 35 47 59 71 83 95      station 11 : offset 11 27 43 59 75 91      station 11 : offset 11 35 59 83
+	;   station 12 : offset 12 24 36 48 60 72 84 96      station 12 : offset 12 28 44 60 76 92      station 12 : offset 12 36 60 84
+	;                                                    station 13 : offset 13 29 45 61 77 93      station 13 : offset 13 37 61 85
+	;                                                    station 14 : offset 14 30 46 62 78 94      station 14 : offset 14 38 62 86
+	;                                                    station 15 : offset 15 31 47 63 79 95      station 15 : offset 15 39 63 87
+	;                                                    station 16 : offset 16 32 48 64 80 96      station 16 : offset 16 40 64 88
+	;                                                                                               station 17 : offset 17 41 65 89
+	;                                                                                               station 18 : offset 18 42 66 90
+	;                                                                                               station 19 : offset 19 43 67 91
+	;                                                                                               station 20 : offset 20 44 68 92
+	;                                                                                               station 21 : offset 21 45 69 93
+	;                                                                                               station 22 : offset 22 46 70 94
+	;                                                                                               station 23 : offset 23 47 71 95
+	;                                                                                               station 24 : offset 24 48 72 96
+	local integer ii
+	ii = tool_position_in_turret + ( tool_position - 1 ) * iStationNum
+	local string ss
+	ss = tostr(tool_position_in_turret:'<T>z2.0(p)') + tostr(ii:'z2.0(p)')
+	if sTool eq ss
+		return
+	endif
+	sTool = ss
+	call @uEndCoolant
+	if iOpType ne 1 or iSpinDir ne ( spin_direction + 1 ) ; don't stop spin between turning operations with same spin direction
+		call @uEndSpin
+	endif
+	if bGoToRef
+		call @uHomeRef(('111'))
+		bGoToRef = 0
+	endif
+	{nb,sTool' '}
+	if tool_message ne ''
+		call @uReplace(tool_message)
+		{'('s_OUT')'}
+	endif
+	iSpindleMode = 0
+	iSpindleClamp = 0
+endp
+
+@uHomeRef(string sHomeRef)
+	if sHomeRef ne '100' and sHomeRef eq '010' and sHomeRef eq '001' and sHomeRef eq '110' and sHomeRef eq '101' and sHomeRef eq '011' and sHomeRef eq '111'
+		return
+	endif
+	local logical bb<<3>>
+	bb<<1>> = int(tonum(substr(sHomeRef,1,1)))
+	bb<<2>> = int(tonum(substr(sHomeRef,2,1)))
+	bb<<3>> = int(tonum(substr(sHomeRef,3,1)))
+	local string ss<<4>>
+	if bb<<1>> and !bHomeRef<<1>>
+		ss<<1>> = ' U0.'
+		bHomeRef<<1>> = 1
+	endif
+	if bb<<2>> and !bHomeRef<<2>>
+		ss<<2>> = ' V0.'
+		bHomeRef<<2>> = 1
+	endif
+	if bb<<3>> and !bHomeRef<<3>>
+		ss<<3>> = ' W0.'
+		bHomeRef<<3>> = 1
+	endif
+	ss<<4>> = ss<<1>> + ss<<2>> + ss<<3>>
+	if ss<<4>> ne ''
+		{nb'G28'ss<<4>>}
+	endif
+endp
+
+@uFirstMove
+	if !bFirstMove
+		return
+	endif
+	call @uOpType
+	call @uXYZA
+	call @uToolChg
+	local logical bbPrintMac bbRadialRetracted
+	if iOpType ne 1 and change(a) and b ne 0 and !bHomeRef<<1>>
+		{nb}
+		if mac_number ne iMacNum
+			if mac_number le 6
+				{'G'(53+mac_number)' '}
+			else
+				{'G54.1 P'(mac_number-6)' '}
+			endif
+			iMacNum = mac_number
+			bbPrintMac = 1
+		endif
+		{'X'(round((nRadialRetrLevel)*2,iLinRnd))}
+		bbRadialRetracted = 1
+	endif
+	call @uReplace(job_name)
+	if blknum_gen
+		{nl'('index_job' * 's_OUT}
+	else
+		if iJobNum<<index_job>> eq 0
+			iJobNum<<index_job>> = index_job * 1000
+		else
+			iJobNum<<index_job>> = iJobNum<<index_job>> + 1
+		endif
+		{nl'N'iJobNum<<index_job>>' ('s_OUT}
+		blknum = iJobNum<<index_job>> + blknum_delta
+	endif
+	if job_time ne ''
+		{' * 'replace(job_time,' ','')}
+	endif
+	{')'}
+	call @uSpindleMode
+	call @uStartSpin
+	call @uStartCoolant
+	{nb}
+	if job_machine_type eq milling
+		if b eq 90
+			{'G19 '}
+		elseif b eq 0
+			if iOpType eq 4
+				{'G18 '}
+			else
+				{'G17 '}
+			endif
+		endif
+	else ; turning
+		{'G18 '}
+	endif
+	if !bbPrintMac
+		if mac_number le 6
+			{'G'(53+mac_number)' '}
+		else
+			{'G54.1 P'(mac_number-6)' '}
+		endif
+		iMacNum = mac_number
+	endif
+	if job_machine_type eq milling
+		if mmp_p1 ; use inverse feed
+			{'G93 '}
+		else
+			if feed_status eq st_mm_teeth or feed_status eq st_inch_teeth
+				{'G99 '}
+			else
+				{'G98 '}
+			endif
+		endif
+	else ; turning
+		{'G'(98+feed_unit)' '}
+	endif
+	if job_machine_type eq turning
+		;		if bHomeRef<<1>>
+		;			{nb'G00 Z'z,nb'X'x' Y'y' '}
+		;		else
+		;			{nb'G00 X'x' Z'z' '}
+		;		endif
+		{nb'G00 X'x' Y'y' Z'z' '}
+		if spin_unit eq css
+			{nb'G50 S'(int(round(spin_limit,0)))}
+			{nb'G96 S'(int(round(spin,0)))}
+		endif
+		if tmp_p5
+			{nb,sPartCatcher<<1>>}
+		endif
+	else ; milling
+		call @uSpindleClamp((0))
+		;		if bHomeRef<<1>> or bbRadialRetracted
+		;			{nb'G00 Z'z' C'a,nb'X'x' Y'y' '}
+		;			skipline = 0
+		;			call @uAutoSpindleClamp
+		;			skipline = 1
+		;		else
+		{nb'G00 X'x' Y'y' Z'z' C'a' '}
+		call @uAutoSpindleClamp
+		;		endif
+	endif
+	if iOpType eq 4
+		{nb'G12.1'}
+		x = 99999999
+		y = 99999999
+		z = 99999999
+	endif
+	bHomeRef<<1>> = 0
+	bHomeRef<<2>> = 0
+	bHomeRef<<3>> = 0
+	bFirstMove = 0
+	f = 0
+	iGcode = 1
+	if current_command eq '@drill'
+		return
+	else
+		exit
+	endif
+endp
+
+@uMove
+	call @uFirstMove
+	if b ne 0 and b ne 90 and b ne 180 and instr(current_command,'arc') ne 0
+		call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * ARCS UNAVAILABLE WITH ANGLE-HEAD'))
+	endif
+	call @uXYZA
+	call @uTrueMove
+	if iOpType eq 6 and bRadCrt and abs(x-round(radial_diameter,iLinRnd)) gt 1 / pow(10,iLinRnd)
+		{nb'G07.1 C0'}
+		bRadCrt = 0
+	endif
+	call @uGcode
+	call @uComp
+	call @uFeed
+	{nb,sGcode,sComp}
+	if iOpType eq 1
+		{['X'x' ']['Z'z' ']}
+	elseif iOpType eq 2
+		{['X'x' ']['Y'y' ']['Z'z' ']}
+	elseif iOpType eq 3
+		{['X'x' ']['Y'y' ']['Z'z' ']['C'a' ']}
+	elseif iOpType eq 4
+		{['X'x' ']['Z'z' ']['C'y' ']}
+	elseif iOpType eq 5
+		{['X'x' ']['Y'y' ']['Z'z' ']['C'a' ']}
+	elseif iOpType eq 6
+		if bRadCrt
+			{['X'x' ']['Z'z' ']['C'y' ']}
+		else
+			{['X'x' ']['Z'z' ']['C'a' ']}
+		endif
+	elseif iOpType eq 7
+		{['X'x' ']['Y'y' ']['Z'z' ']['C'a' ']}
+	endif
+	if iGcode ge 3
+		if iOpType eq 1 ; turning
+			{'R'(round(radius,iLinRnd))' '}
+		else ; milling
+			if arc_size le 180
+				{'R'(round(radius,iLinRnd))' '}
+			else
+				if b eq 90
+					{'J'j' K'k' '}
+				else
+					{'I'i' J'j' '}
+				endif
+			endif
+		endif
+	endif
+	{['F'f' ']}
+	if iOpType eq 6 and !bRadCrt and abs(x-round(radial_diameter,iLinRnd)) le 1 / pow(10,iLinRnd)
+		{nb'G07.1 C'(round(radial_diameter/2,iLinRnd))}
+		bRadCrt = 1
+	endif
+endp
+
+@uStartSpin
+	if job_machine_type eq milling
+		{nb'G97 S'(int(round(spin,0)))' 'sSpinDir<<2,spin_direction+1>>}
+		iSpinDir = spin_direction + 3
+	else ; turning
+		local integer ii
+		if spin_unit eq css
+			if x eq 0
+				ii = round(spin_limit,0)
+			else
+				ii = round((spin*(1000-988*inch_system))/(abs(x)*pi),0)
+			endif
+			if ii gt round(spin_limit,0)
+				ii = round(spin_limit,0)
+			endif
+			if ii lt spin_min_limit
+				ii = spin_min_limit
+			endif
+		else
+			ii = round(spin,0)
+		endif
+		{nb'G97 S'ii' 'sSpinDir<<1,spin_direction+1>>}
+		iSpinDir = spin_direction + 1
+	endif
+endp
+
+@uEndSpin
+	local string ss
+	if iSpinDir eq 1 or iSpinDir eq 2
+		ss = sSpinDir<<1,3>>
+	endif
+	if iSpinDir eq 3 or iSpinDir eq 4
+		ss = sSpinDir<<2,3>>
+	endif
+	if ss ne ''
+		{nb,ss}
+		iSpinDir = 0
+	endif
+endp
+
+@uStartCoolant
+	local string ss
+	if !mo_p6 and flood_coolant ne 1 and bTrFloodCoolant
+		ss = sTrFloodCoolant<<2>> + ' '
+		bTrFloodCoolant = 0
+	endif
+	if ( mo_p6 or flood_coolant eq 1 ) and !bTrFloodCoolant
+		ss = sTrFloodCoolant<<1>> + ' '
+		bTrFloodCoolant = 1
+	endif
+	if ss ne ''
+		{nb,ss}
+	endif
+endp
+
+@uEndCoolant
+	local string ss
+	if bTrFloodCoolant
+		ss = sTrFloodCoolant<<2>> + ' '
+		bTrFloodCoolant = 0
+	endif
+	if ss ne ''
+		{nb,ss}
+	endif
+endp
+
+@uOpType
+	iOpType = 0
+	if job_machine_type eq turning
+		iOpType = 1 ; turning
+	else ; milling
+		if x5_job
+			iOpType = 7 ; 4x sim
+		else
+			if rot_axis_type eq 1
+				iOpType = 2 ; index
+			elseif rot_axis_type eq 2 and rot_axis_coord eq 3
+				iOpType = 3 ; face polar
+			elseif rot_axis_type eq 2 and rot_axis_coord eq 4
+				iOpType = 4 ; face cartesian
+			elseif rot_axis_type eq 4 and rot_axis_coord eq 3
+				iOpType = 5 ; radial polar
+			elseif rot_axis_type eq 4 and rot_axis_coord eq 4
+				iOpType = 6 ; radial cartesian
+			endif
+		endif
+	endif
+	if iOpType eq 0
+		call @uAbort((' * ' + upper(job_name) + ' * UNABLE TO CALCULATE OPERATION TYPE * '))
+	endif
+	if iOpType eq 1
+		b = 0
+	else
+		b = round(ang(spindle_direction_z,spindle_direction_x),iAngRnd)
+	endif
+	if b ne 0 and b ne 90 and b ne 180
+		if current_command eq '@drill'
+			call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * DRILL CYCLES UNAVAILABLE WITH ANGLE-HEAD'))
+		endif
+	endif
+	if mmp_p1 and iOpType ne 3 and iOpType ne 5 and iOpType ne 7 ; use inverse feed only in face polar, radial polar and 4x sim
+		mmp_p1 = 0
+	endif
+	if mmp_p1 and instr(job_type,'drill') ne 0
+		mmp_p1 = 0
+	endif
+	if iOpType ne 6
+		radial_diameter = 25.4 - ( inch_system * 24.4 )
+	endif
+	if ( iOpType eq 3 or iOpType eq 4 ) and face4x_tool_motion_plane ne xc
+		call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * WRONG PLANE, PLEASE SELECT XC * '))
+	endif
+	if iOpType eq 6 and machine_plane ne yz
+		call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * WRONG PLANE, PLEASE SELECT YZ * '))
+	endif
+	if iOpType eq 6 and instr(job_type,'drill') ne 0
+		call @uAbort((' * OP' + tostr(index_job:'8.0(p)< * >') + upper(job_name) + ' * DRILL NOT AVAILABLE IN RADIAL CARTESIAN'))
+	endif
+endp
+
+@uXYZA
+	local numeric n1<<4>> n2<<2,7,7>> ; first/next move | axis number | operation type
+	;		save old values
+	n1<<1>> = x
+	n1<<2>> = y
+	n1<<3>> = z
+	n1<<4>> = a
+	; turning, first move
+	n2<<1,1,1>> = xpos * 2
+	n2<<1,2,1>> = ypos
+	n2<<1,3,1>> = zpos
+	n2<<1,4,1>> = 99999999
+	; turning, next moves
+	n2<<2,1,1>> = xpos * 2
+	n2<<2,2,1>> = n1<<2>>
+	n2<<2,3,1>> = zpos
+	n2<<2,4,1>> = n1<<4>>
+	n2<<2,5,1>> = xcenter_rel
+	n2<<2,6,1>> = ycenter_rel
+	n2<<2,7,1>> = zcenter_rel
+	; index, first move
+	n2<<1,1,2>> = xopos * 2
+	n2<<1,2,2>> = yopos
+	n2<<1,3,2>> = zopos
+	n2<<1,4,2>> = anext
+	; index, next moves
+	n2<<2,1,2>> = xopos * 2
+	n2<<2,2,2>> = yopos
+	n2<<2,3,2>> = zopos
+	n2<<2,4,2>> = n1<<4>>
+	n2<<2,5,2>> = xocenter_rel
+	n2<<2,6,2>> = yocenter_rel
+	n2<<2,7,2>> = zocenter_rel
+	; face polar, first move
+	n2<<1,1,3>> = xopos * 2
+	n2<<1,2,3>> = yopos
+	n2<<1,3,3>> = zopos
+	n2<<1,4,3>> = apos
+	; face polar, next moves
+	n2<<2,1,3>> = xopos * 2
+	n2<<2,2,3>> = yopos
+	n2<<2,3,3>> = zopos
+	n2<<2,4,3>> = apos
+	n2<<2,5,3>> = xocenter_rel
+	n2<<2,6,3>> = yocenter_rel
+	n2<<2,7,3>> = zocenter_rel
+	; face cartesian, first move
+	n2<<1,1,4>> = xopos * 2
+	n2<<1,2,4>> = yopos
+	n2<<1,3,4>> = zopos
+	n2<<1,4,4>> = apos
+	; face cartesian, next moves
+	n2<<2,1,4>> = xhpos * 2
+	n2<<2,2,4>> = yhpos
+	n2<<2,3,4>> = zhpos
+	n2<<2,4,4>> = apos
+	n2<<2,5,4>> = xhcenter_rel
+	n2<<2,6,4>> = yhcenter_rel
+	n2<<2,7,4>> = zhcenter_rel
+	; radial polar, first move
+	n2<<1,1,5>> = xopos * 2
+	n2<<1,2,5>> = yopos
+	n2<<1,3,5>> = zopos
+	n2<<1,4,5>> = apos
+	; radial polar, next moves
+	n2<<2,1,5>> = xopos * 2
+	n2<<2,2,5>> = yopos
+	n2<<2,3,5>> = zopos
+	n2<<2,4,5>> = apos
+	n2<<2,5,5>> = xocenter_rel
+	n2<<2,6,5>> = yocenter_rel
+	n2<<2,7,5>> = zocenter_rel
+	; radial cartesian, first move
+	n2<<1,1,6>> = xnext * 2
+	n2<<1,2,6>> = ynext
+	n2<<1,3,6>> = znext
+	n2<<1,4,6>> = anext
+	; radial cartesian, next moves
+	n2<<2,1,6>> = xpos * 2
+	if current_command eq '@arc4x_cartesian'
+		n2<<2,2,6>> = -cpos
+	else
+		n2<<2,2,6>> = -ypos
+	endif
+	n2<<2,3,6>> = zpos
+	if round(n2<<2,2,6>>,iLinRnd) eq 0
+		n2<<2,4,6>> = 0
+	else
+		n2<<2,4,6>> = ( n2<<2,2,6>> * 360 ) / ( pi * radial_diameter )
+	endif
+	; 4x sim, first move
+	n2<<1,1,7>> = xopos * 2
+	n2<<1,2,7>> = yopos
+	n2<<1,3,7>> = zopos
+	n2<<1,4,7>> = apos
+	; 4x sim, next moves
+	n2<<2,1,7>> = xopos * 2
+	n2<<2,2,7>> = yopos
+	n2<<2,3,7>> = zopos
+	n2<<2,4,7>> = apos
+	; load values
+	x = n2<<2-bFirstMove,1,iOpType>>
+	y = n2<<2-bFirstMove,2,iOpType>>
+	z = n2<<2-bFirstMove,3,iOpType>>
+	a = n2<<2-bFirstMove,4,iOpType>>
+	;		a = mod(a,360)
+	i = n2<<2,5,iOpType>>
+	j = n2<<2,6,iOpType>>
+	k = n2<<2,7,iOpType>>
+	; round values
+	x = round(x,iLinRnd)
+	y = round(y,iLinRnd)
+	z = round(z,iLinRnd)
+	a = round(a,iAngRnd)
+	h = a - n1<<4>>
+	i = round(i,iLinRnd)
+	j = round(j,iLinRnd)
+	k = round(k,iLinRnd)
+	; cancel -0
+	x  = sign(x) * abs(x)
+	y  = sign(y) * abs(y)
+	z  = sign(z) * abs(z)
+	a  = sign(a) * abs(a)
+	i  = sign(i) * abs(i)
+	j  = sign(j) * abs(j)
+	k  = sign(k) * abs(k)
+	; check modality
+	change(x) = sign(abs(x-n1<<1>>))
+	change(y) = sign(abs(y-n1<<2>>))
+	change(z) = sign(abs(z-n1<<3>>))
+	change(a) = sign(abs(a-n1<<4>>))
+	change(h) = sign(abs(h))
+	change(i) = sign(abs(i))
+	change(j) = sign(abs(j))
+	change(k) = sign(abs(k))
+endp
+
+@uTrueMove
+	if instr(current_command,'arc') ne 0
+		return
+	endif
+	local logical bb bb<<7>>
+	bb<<1>> = sign( change(x) + change(z) )
+	bb<<2>> = sign( change(x) + change(y) + change(z) )
+	bb<<3>> = sign( change(x) + change(z) + change(a) )
+	bb<<4>> = sign( change(x) + change(y) + change(z) )
+	bb<<5>> = sign( change(x) + change(z) + change(a) )
+	bb<<6>> = sign( change(x) + change(z) + change(a) )
+	bb<<7>> = sign( change(x) + change(y) + change(z) + change(a) )
+	bb      = bb<<iOpType>>
+	if !bb
+		exit
+	endif
+endp
+
+@uGcode
+	local integer ii
+	if instr(current_command,'move') ne 0
+		ii = 1
+		if iOpType eq 4
+			ii = 2
+			feed = nRapidFeed
+		endif
+	elseif instr(current_command,'line') ne 0
+		ii = 2
+	elseif instr(current_command,'arc') ne 0
+		ii = arc_direction + 3
+	endif
+	sGcode = ''
+	if iGcode ne ii
+		if ii eq 1
+			sGcode = 'G00 '
+		elseif ii eq 2
+			sGcode = 'G01 '
+		elseif ii eq 3
+			sGcode = 'G02 '
+		elseif ii eq 4
+			sGcode = 'G03 '
+		endif
+		iGcode = ii
+	endif
+endp
+
+@uComp
+	sComp = ''
+	if iComp ne side
+		if side eq 0
+			sComp = 'G40 '
+		elseif side eq 1
+			sComp = 'G41 '
+		elseif side eq 2
+			sComp = 'G42 '
+		endif
+		iComp = side
+	endif
+endp
+
+@uFeed
+	local numeric nn
+	nn = f
+	if iGcode eq 1
+		change(f) = 0
+		return
+	endif
+	if iOpType eq 1 ; turning
+		f = round(feed,iLinRnd)
+		change(f) = sign(abs(f-nn))
+	else ; milling
+		if mmp_p1 ; use inverse feed
+			f = round(inverse_feed,iLinRnd)
+			change(f) = 1
+		else
+			if ( iOpType eq 3 or iOpType eq 5 ) and ( change(x) or change(z) )
+				feed = original_feed
+			endif
+			if feed_status eq st_mm_teeth or feed_status eq st_inch_teeth
+				f = round(feed/spin,iLinRnd)
+			else
+				f = round(feed,iLinRnd)
+			endif
+			change(f) = sign(abs(f-nn))
+		endif
+	endif
+endp
+
+@uSpindleClamp(logical bOnOff)
+	if bOnOff and iSpindleClamp ne 1
+		{nb,sSpindleClamp<<1>>' '}
+		iSpindleClamp = 1
+	elseif !bOnOff and iSpindleClamp ne 2
+		{nb,sSpindleClamp<<2>>' '}
+		iSpindleClamp = 2
+	endif
+endp
+
+@uAutoSpindleClamp
+	if iOpType eq 1
+		return
+	elseif iOpType eq 2
+		call @uSpindleClamp((1))
+	else
+		call @uSpindleClamp((0))
+	endif
+endp
+
+@uSpindleMode
+	if job_machine_type eq milling and iSpindleMode ne 1
+		;{nb,sSpindleMode<<1>>}
+		iSpindleMode = 1
+	elseif job_machine_type eq turning and iSpindleMode ne 2
+		;{nb,sSpindleMode<<2>>}
+		iSpindleMode = 2
+	endif
+endp
+
+@uReplace(string s_IN)
+	s_OUT = replace(s_IN,'-','_')
+	s_OUT = replace(s_OUT,'(','_')
+	s_OUT = replace(s_OUT,')','_')
+	s_OUT = upper(s_OUT)
+endp
+
+@uRadialRetrLevel
+	local numeric nn<<7>>
+	if stock_type eq 1 ; cylinder
+		nn<<7>> = stock_x / 2
+	else
+		if stock_type eq -1 ; no stock
+			nn<<1>> = abs(target_x_plus)
+			nn<<2>> = abs(target_x_minus)
+			nn<<3>> = abs(target_y_plus)
+			nn<<4>> = abs(target_y_minus)
+		elseif stock_type eq 0 ; box
+			nn<<1>> = abs(stock_x_plus)
+			nn<<2>> = abs(stock_x_minus)
+			nn<<3>> = abs(stock_y_plus)
+			nn<<4>> = abs(stock_y_minus)
+		endif
+		if nn<<1>> ge nn<<2>>
+			nn<<5>> = nn<<1>>
+		else
+			nn<<5>> = nn<<2>>
+		endif
+		if nn<<3>> ge nn<<4>>
+			nn<<6>> = nn<<3>>
+		else
+			nn<<6>> = nn<<4>>
+		endif
+		nn<<7>> = dist(nn<<5>>,nn<<6>>)
+	endif
+	if mo_p8 eq 0
+		if inch_system
+			nRadialRetrLevel = nn<<7>> + 0.4
+		else
+			nRadialRetrLevel = nn<<7>> + 10
+		endif
+	else
+		nRadialRetrLevel = nn<<7>> + mo_p8
+	endif
+endp
+
+@uAbort(string sAbort)
+	if sAbort ne ''
+		print sAbort
+	endif
+	{nl'!!close file='g_file_name'.tmp!!'}
+	{nl'!!delete file='g_file_name'.tmp!!'}
+	abort
+endp
